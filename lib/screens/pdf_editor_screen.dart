@@ -1,11 +1,23 @@
-import 'dart:io';
+import 'dart:developer';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import '/models/drawn_line.dart';
 import '/widgets/drawing_painter.dart';
 import '/utils/pdf_utils.dart';
 import 'package:file_picker/file_picker.dart';
+
+enum Mode {
+  highlight,
+  draw,
+  erase,
+  text,
+  pan,
+}
 
 class PdfEditorScreen extends StatefulWidget {
   @override
@@ -13,7 +25,8 @@ class PdfEditorScreen extends StatefulWidget {
 }
 
 class _PdfEditorScreenState extends State<PdfEditorScreen> {
-  PdfViewerController _pdfViewerController = PdfViewerController();
+  Mode mode = Mode.pan;
+  final PdfViewerController _pdfViewerController = PdfViewerController();
   String? _pdfPath;
   Map<int, List<DrawnLine>> pageLines = {}; // Annotations per page
   Map<int, List<DrawnLine>> pageHighlights = {};
@@ -23,26 +36,14 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   List<DrawnLine> highlights = [];
   Offset? currentPoint;
 
-  bool isHighlightMode = false;
-  bool isEraseMode = false; // Erase mode flag
   double pointerSize = 3.0; // Default pointer size
   Color pointerColor = Colors.black; // Default pointer color
+  bool showOptions = true;
 
-  void _updateMode(String mode) {
-    setState(() {
-      if (mode == 'Highlight') {
-        isHighlightMode = true;
-        isEraseMode = false;
-      } else if (mode == 'Draw') {
-        isHighlightMode = false;
-        isEraseMode = false;
-      } else if (mode == 'Erase') {
-        isHighlightMode = false;
-        isEraseMode = true;
-      }
-    });
-  }
-
+  // Page dimensions and zoom factor
+  Size? pageSize;
+  double zoomLevel = 1.0;
+  TextEditingController _pageController = TextEditingController();
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -52,7 +53,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
           if (_pdfPath != null) ...[
             IconButton(
               icon: Icon(Icons.undo),
-              onPressed: _undo, // Undo button
+              onPressed: _undo,
             ),
             IconButton(
               icon: Icon(Icons.save),
@@ -67,162 +68,344 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
       ),
       body: _pdfPath == null
           ? Center(child: Text("Open a PDF to start editing"))
-          : Stack(
+          : Column(
               children: [
-                SfPdfViewer.file(
-                  File(_pdfPath!),
-                  controller: _pdfViewerController,
-                  onPageChanged: (details) {
-                    setState(() {
-                      // Save current page annotations
-                      if (pageLines[currentPage] == null) {
-                        pageLines[currentPage] = List.from(lines);
-                      } else {
-                        pageLines[currentPage] = lines;
-                      }
-                      if (pageHighlights[currentPage] == null) {
-                        pageHighlights[currentPage] = List.from(highlights);
-                      } else {
-                        pageHighlights[currentPage] = highlights;
-                      }
+                Expanded(
+                  child: Stack(
+                    children: [
+                      SfPdfViewer.file(
+                        File(_pdfPath!),
+                        pageLayoutMode: PdfPageLayoutMode.single,
+                        controller: _pdfViewerController,
+                        onDocumentLoaded: (details) {
+                          setState(() {
+                            totalPages = details.document.pages.count;
+                            currentPage = 1;
+                            _pageController.text = 1.toString();
+                          });
 
-                      // Switch to new page
-                      currentPage = details.newPageNumber;
-                      lines = pageLines[currentPage] ?? [];
-                      highlights = pageHighlights[currentPage] ?? [];
-                    });
+                          final PdfDocument pdfDocument = PdfDocument(
+                            inputBytes: File(_pdfPath!).readAsBytesSync(),
+                          );
+                          final PdfPage firstPage = pdfDocument.pages[0];
+                          setState(() {
+                            pageSize = Size(
+                              firstPage.size.width,
+                              firstPage.size.height,
+                            );
+                            zoomLevel = _pdfViewerController.zoomLevel;
+                          });
+                          pdfDocument.dispose();
+                        },
+                        onPageChanged: (details) async {
+                          // Save current page annotations
+                          if (pageLines[currentPage] == null) {
+                            pageLines[currentPage] = List.from(lines);
+                          } else {
+                            pageLines[currentPage] = lines;
+                          }
+                          if (pageHighlights[currentPage] == null) {
+                            pageHighlights[currentPage] = List.from(highlights);
+                          } else {
+                            pageHighlights[currentPage] = highlights;
+                          }
+
+                          currentPage = details.newPageNumber;
+                          _pageController.text =
+                              details.newPageNumber.toString();
+                          lines = pageLines[currentPage] ?? [];
+                          highlights = pageHighlights[currentPage] ?? [];
+
+                          // Get page dimensions for the current page
+                          final PdfDocument pdfDocument = PdfDocument(
+                            inputBytes: File(_pdfPath!).readAsBytesSync(),
+                          );
+                          final PdfPage currentPageObj =
+                              pdfDocument.pages[details.newPageNumber - 1];
+                          setState(() {
+                            pageSize = Size(
+                              currentPageObj.size.width,
+                              currentPageObj.size.height,
+                            );
+                            zoomLevel = _pdfViewerController.zoomLevel;
+                          });
+                          pdfDocument.dispose();
+                        },
+                      ),
+                      AbsorbPointer(
+                        absorbing: mode == Mode.pan,
+                        child: GestureDetector(
+                          onPanStart: (details) {
+                            if (mode != Mode.pan) {
+                              setState(() {
+                                currentPoint =
+                                    _getNormalizedOffset(details.localPosition);
+                                if (mode == Mode.erase) {
+                                  _eraseLine(currentPoint!);
+                                }
+                              });
+                            }
+                          },
+                          onPanUpdate: (details) {
+                            if (mode != Mode.pan) {
+                              setState(() {
+                                final offset =
+                                    _getNormalizedOffset(details.localPosition);
+                                if (mode == Mode.erase) {
+                                  _eraseLine(offset);
+                                } else if (mode == Mode.highlight) {
+                                  if (highlights.isNotEmpty &&
+                                      highlights.last.isDrawing) {
+                                    highlights.last.points.add(offset);
+                                  } else {
+                                    highlights.add(DrawnLine(
+                                      [offset],
+                                      Colors.yellow.withOpacity(0.3),
+                                      15.0,
+                                      isDrawing: true,
+                                    ));
+                                  }
+                                } else if (mode == Mode.draw) {
+                                  if (lines.isNotEmpty &&
+                                      lines.last.isDrawing) {
+                                    lines.last.points.add(offset);
+                                  } else {
+                                    lines.add(DrawnLine(
+                                      [offset],
+                                      pointerColor,
+                                      pointerSize,
+                                      isDrawing: true,
+                                    ));
+                                  }
+                                }
+                                currentPoint = offset;
+                              });
+                            }
+                          },
+                          onPanEnd: (_) {
+                            if (mode != Mode.pan) {
+                              setState(() {
+                                if (mode == Mode.highlight &&
+                                    highlights.isNotEmpty) {
+                                  highlights.last.isDrawing = false;
+                                } else if (mode == Mode.draw &&
+                                    lines.isNotEmpty) {
+                                  lines.last.isDrawing = false;
+                                }
+                                currentPoint = null;
+                              });
+                            }
+                          },
+                          child: pageSize == null
+                              ? SizedBox.shrink()
+                              : Align(
+                                  alignment: Alignment.center,
+                                  child: Container(
+                                    width: pageSize!.width * zoomLevel,
+                                    height: pageSize!.height * zoomLevel,
+                                    child: CustomPaint(
+                                      painter: DrawingPainter(
+                                        _getAbsoluteLines(lines),
+                                        _getAbsoluteLines(highlights),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                _buildToolbar(),
+              ],
+            ),
+    );
+  }
+
+  Widget _buildToolbar() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (_pdfPath != null && showOptions)
+          Container(
+            color: Colors.grey[300],
+            padding: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                IconButton(
+                  color: mode == Mode.highlight ? Colors.yellow : Colors.black,
+                  icon: Icon(Icons.highlight),
+                  tooltip: 'Highlight',
+                  onPressed: () {
+                    _updateMode(Mode.highlight);
                   },
                 ),
-                GestureDetector(
-                  onPanStart: (details) {
-                    setState(() {
-                      currentPoint = details.localPosition;
-                      if (isEraseMode) {
-                        _eraseLine(currentPoint!); // Erase if in eraser mode
-                      }
-                    });
+                IconButton(
+                  color: mode == Mode.draw ? Colors.red : Colors.black,
+                  icon: Icon(Icons.brush, color: pointerColor),
+                  tooltip: 'Draw',
+                  onPressed: () {
+                    _updateMode(Mode.draw);
                   },
-                  onPanUpdate: (details) {
-                    setState(() {
-                      final offset = details.localPosition;
-                      if (isEraseMode) {
-                        _eraseLine(offset);
-                      } else if (isHighlightMode) {
-                        if (highlights.isNotEmpty &&
-                            highlights.last.isDrawing) {
-                          highlights.last.points.add(offset);
-                        } else {
-                          highlights.add(DrawnLine(
-                            [offset],
-                            Colors.yellow.withOpacity(0.3),
-                            15.0,
-                            isDrawing: true,
-                          ));
-                        }
-                      } else {
-                        if (lines.isNotEmpty && lines.last.isDrawing) {
-                          lines.last.points.add(offset);
-                        } else {
-                          lines.add(DrawnLine(
-                            [offset],
-                            pointerColor,
-                            pointerSize,
-                            isDrawing: true,
-                          ));
-                        }
-                      }
-                      currentPoint = offset;
-                    });
+                ),
+                IconButton(
+                  color: mode == Mode.erase ? Colors.red : Colors.black,
+                  icon: Icon(FontAwesomeIcons.eraser),
+                  tooltip: 'Erase',
+                  onPressed: () {
+                    _updateMode(Mode.erase);
                   },
-                  onPanEnd: (_) {
-                    setState(() {
-                      if (isHighlightMode && highlights.isNotEmpty) {
-                        highlights.last.isDrawing = false;
-                      } else if (!isHighlightMode && lines.isNotEmpty) {
-                        lines.last.isDrawing = false;
-                      }
-                      currentPoint = null;
-                    });
+                ),
+                IconButton(
+                  color: mode == Mode.pan ? Colors.red : Colors.black,
+                  icon: Icon(FontAwesomeIcons.hand),
+                  tooltip: 'Pan',
+                  onPressed: () {
+                    _updateMode(Mode.pan);
                   },
-                  child: CustomPaint(
-                    size: Size.infinite,
-                    painter: DrawingPainter(
-                      lines,
-                      highlights,
-                    ), // Only current page's annotations
-                  ),
+                ),
+                IconButton(
+                  color: mode == Mode.pan ? Colors.red : Colors.black,
+                  icon: Icon(Icons.zoom_in),
+                  tooltip: 'Zoom in',
+                  onPressed: () {
+                    _pdfViewerController.zoomLevel += 0.1;
+                  },
+                ),
+                IconButton(
+                  color: mode == Mode.pan ? Colors.red : Colors.black,
+                  icon: Icon(Icons.zoom_out),
+                  tooltip: 'Zoom out',
+                  onPressed: () {
+                    _pdfViewerController.zoomLevel -= 0.1;
+                  },
                 ),
               ],
             ),
-      floatingActionButton: _pdfPath != null
-          ? PopupMenuButton<String>(
-              icon: Icon(Icons.menu), // Main button icon
-              onSelected: (String option) {
-                if (option == 'Pointer Size') {
-                  _showPointerSizeSelector(
-                      context); // Open pointer size selector
-                } else if (option == 'Pointer Color') {
-                  _showPointerColorSelector(context); // Open color picker
-                } else {
-                  _updateMode(option); // Update drawing mode
-                }
-              },
-              itemBuilder: (BuildContext context) => [
-                PopupMenuItem(
-                  value: 'Highlight',
-                  child: Row(
-                    children: [
-                      Icon(Icons.highlight, color: Colors.yellow),
-                      SizedBox(width: 8),
-                      Text('Highlight'),
-                    ],
-                  ),
+          ),
+        Container(
+          color: Colors.grey[200],
+          padding: EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          child: Row(
+            children: [
+              IconButton(
+                icon: Icon(Icons.arrow_back),
+                onPressed: () {
+                  if (currentPage > 1) {
+                    _pdfViewerController.previousPage();
+                  }
+                },
+              ),
+              Expanded(
+                child: Row(
+                  children: [
+                    Text("Page:"),
+                    SizedBox(width: 8),
+                    SizedBox(
+                      width: 50,
+                      child: TextField(
+                        controller: _pageController,
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.symmetric(vertical: 4),
+                          border: OutlineInputBorder(),
+                        ),
+                        keyboardType: TextInputType.number,
+                        onSubmitted: (value) {
+                          final int? page = int.tryParse(value);
+                          if (page != null &&
+                              page > 0 &&
+                              page <= totalPages &&
+                              page != currentPage) {
+                            _pdfViewerController.jumpToPage(page);
+                          }
+                        },
+                      ),
+                    ),
+                    Text(
+                      " / $totalPages",
+                      style: TextStyle(fontSize: 16),
+                    ),
+                  ],
                 ),
-                PopupMenuItem(
-                  value: 'Draw',
-                  child: Row(
-                    children: [
-                      Icon(Icons.edit, color: pointerColor),
-                      SizedBox(width: 8),
-                      Text('Draw'),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'Erase',
-                  child: Row(
-                    children: [
-                      Icon(Icons.delete, color: Colors.red),
-                      SizedBox(width: 8),
-                      Text('Erase'),
-                    ],
-                  ),
-                ),
-                PopupMenuDivider(),
-                PopupMenuItem(
-                  value: 'Pointer Size',
-                  child: Row(
-                    children: [
-                      Icon(Icons.linear_scale),
-                      SizedBox(width: 8),
-                      Text('Pointer Size'),
-                    ],
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'Pointer Color',
-                  child: Row(
-                    children: [
-                      Icon(Icons.color_lens, color: pointerColor),
-                      SizedBox(width: 8),
-                      Text('Pointer Color'),
-                    ],
-                  ),
-                ),
-              ],
-            )
-          : null,
+              ),
+              IconButton(
+                icon: Icon(Icons.arrow_forward),
+                onPressed: () {
+                  if (currentPage < totalPages) {
+                    _pdfViewerController.nextPage();
+                    setState(() {});
+                  }
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
     );
+  }
+
+  Offset _getNormalizedOffset(Offset localPosition) {
+    if (pageSize == null || zoomLevel == 0) return localPosition;
+
+    return Offset(
+      localPosition.dx / (pageSize!.width * zoomLevel),
+      localPosition.dy / (pageSize!.height * zoomLevel),
+    );
+  }
+
+  Offset _getAbsoluteOffset(Offset normalizedOffset) {
+    if (pageSize == null) return normalizedOffset;
+
+    return Offset(
+      normalizedOffset.dx * pageSize!.width * zoomLevel,
+      normalizedOffset.dy * pageSize!.height * zoomLevel,
+    );
+  }
+
+  List<DrawnLine> _getAbsoluteLines(List<DrawnLine> normalizedLines) {
+    return normalizedLines
+        .map((line) => DrawnLine(
+              line.points.map(_getAbsoluteOffset).toList(),
+              line.color,
+              line.strokeWidth * zoomLevel,
+              isDrawing: line.isDrawing,
+            ))
+        .toList();
+  }
+
+  void _updateMode(Mode newMode) {
+    log("Update mode ");
+    setState(() {
+      mode = newMode;
+    });
+  }
+
+  Offset _getScaledOffset(Offset localPosition) {
+    if (pageSize == null || zoomLevel == 0) return localPosition;
+
+    return Offset(
+      localPosition.dx / zoomLevel,
+      localPosition.dy / zoomLevel,
+    );
+  }
+
+  void _handlePointerEvent(PointerEvent event) {
+    log("handling pointer events");
+    if (event is PointerDownEvent || event is PointerMoveEvent) {
+      final Offset offset = _getScaledOffset(event.localPosition);
+      if (mode == Mode.draw) {
+        setState(() {
+          if (lines.isEmpty || !lines.last.isDrawing) {
+            lines.add(DrawnLine([offset], pointerColor, pointerSize,
+                isDrawing: true));
+          } else {
+            lines.last.points.add(offset);
+          }
+        });
+      }
+    }
   }
 
   Future<void> _pickPDF() async {
@@ -240,10 +423,10 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
 
   void _undo() {
     setState(() {
-      if (isHighlightMode && highlights.isNotEmpty) {
-        highlights.removeLast(); // Remove the last highlight
-      } else if (!isHighlightMode && lines.isNotEmpty) {
-        lines.removeLast(); // Remove the last line
+      if (mode == Mode.highlight && highlights.isNotEmpty) {
+        highlights.removeLast();
+      } else if (mode == Mode.draw && lines.isNotEmpty) {
+        lines.removeLast();
       }
     });
   }
@@ -272,13 +455,5 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
         SnackBar(content: Text('PDF saved to ${file.path}')),
       );
     }
-  }
-
-  void _showPointerSizeSelector(BuildContext context) {
-    // Pointer size selector dialog logic here
-  }
-
-  void _showPointerColorSelector(BuildContext context) {
-    // Pointer color selector dialog logic here
   }
 }
