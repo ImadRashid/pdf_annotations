@@ -1,13 +1,15 @@
 import 'dart:ui';
-
 import 'package:flutter/material.dart';
+import '../models/text_annotation.dart';
+import '../screens/pdf_editor_screen.dart';
 import '/models/drawn_line.dart';
 
 class DrawingPainter extends CustomPainter {
   final List<DrawnLine> lines;
   final List<DrawnLine> highlights;
+  final List<TextAnnotation>? textAnnotations;
 
-  DrawingPainter(this.lines, this.highlights);
+  DrawingPainter(this.lines, this.highlights, {this.textAnnotations});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -15,16 +17,37 @@ class DrawingPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
+    // Draw lines
     for (final line in lines) {
       paint.color = line.color;
       paint.strokeWidth = line.strokeWidth;
       _drawPath(canvas, line);
     }
 
+    // Draw highlights
     for (final highlight in highlights) {
       paint.color = highlight.color;
       paint.strokeWidth = highlight.strokeWidth;
       _drawPath(canvas, highlight);
+    }
+
+    // Draw text annotations
+    if (textAnnotations != null) {
+      for (final annotation in textAnnotations!) {
+        final textPainter = TextPainter(
+          text: TextSpan(
+            text: annotation.text,
+            style: TextStyle(
+              color: Colors.black,
+              fontSize: 14, // Default text size
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        );
+
+        textPainter.layout();
+        textPainter.paint(canvas, annotation.position);
+      }
     }
   }
 
