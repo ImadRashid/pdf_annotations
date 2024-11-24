@@ -1,19 +1,11 @@
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import '/models/drawn_line.dart';
 import '/widgets/drawing_painter.dart';
 import '/utils/pdf_utils.dart';
 import 'package:file_picker/file_picker.dart';
-import 'package:flutter_pdfview/flutter_pdfview.dart';
-import 'dart:io';
-import 'dart:typed_data';
-import '/models/drawn_line.dart';
-import '/widgets/drawing_painter.dart';
-import '/utils/pdf_utils.dart';
-import 'package:file_picker/file_picker.dart';
-import 'package:flutter_pdfview/flutter_pdfview.dart';
 
 class PdfEditorScreen extends StatefulWidget {
   @override
@@ -21,8 +13,7 @@ class PdfEditorScreen extends StatefulWidget {
 }
 
 class _PdfEditorScreenState extends State<PdfEditorScreen> {
-  int? _totalPages;
-  PDFViewController? _pdfController;
+  PdfViewerController _pdfViewerController = PdfViewerController();
   String? _pdfPath;
   Map<int, List<DrawnLine>> pageLines = {}; // Annotations per page
   Map<int, List<DrawnLine>> pageHighlights = {};
@@ -34,12 +25,9 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
 
   bool isHighlightMode = false;
   bool isEraseMode = false; // Erase mode flag
-  bool isScrolling = false;
-
   double pointerSize = 3.0; // Default pointer size
   Color pointerColor = Colors.black; // Default pointer color
 
-  // Update mode selection
   void _updateMode(String mode) {
     setState(() {
       if (mode == 'Highlight') {
@@ -52,20 +40,6 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
         isHighlightMode = false;
         isEraseMode = true;
       }
-    });
-  }
-
-  // Change pointer size
-  void _changePointerSize(double size) {
-    setState(() {
-      pointerSize = size;
-    });
-  }
-
-  // Change pointer color
-  void _changePointerColor(Color color) {
-    setState(() {
-      pointerColor = color;
     });
   }
 
@@ -89,121 +63,95 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
             icon: Icon(Icons.folder_open),
             onPressed: _pickPDF,
           ),
-          IconButton(
-            icon: Icon(Icons.remove),
-            onPressed: _toggleEraser,
-          ),
         ],
       ),
       body: _pdfPath == null
           ? Center(child: Text("Open a PDF to start editing"))
           : Stack(
               children: [
-                Listener(
-                  onPointerDown: (details) {
-                    if (details.kind == PointerDeviceKind.touch &&
-                        details.buttons == kSecondaryMouseButton) {
-                      setState(() {
-                        isScrolling = true;
-                      });
-                    }
-                  },
-                  onPointerUp: (_) {
+                SfPdfViewer.file(
+                  File(_pdfPath!),
+                  controller: _pdfViewerController,
+                  onPageChanged: (details) {
                     setState(() {
-                      isScrolling = false;
+                      // Save current page annotations
+                      if (pageLines[currentPage] == null) {
+                        pageLines[currentPage] = List.from(lines);
+                      } else {
+                        pageLines[currentPage] = lines;
+                      }
+                      if (pageHighlights[currentPage] == null) {
+                        pageHighlights[currentPage] = List.from(highlights);
+                      } else {
+                        pageHighlights[currentPage] = highlights;
+                      }
+
+                      // Switch to new page
+                      currentPage = details.newPageNumber;
+                      lines = pageLines[currentPage] ?? [];
+                      highlights = pageHighlights[currentPage] ?? [];
                     });
                   },
-                  child: PDFView(
-                    filePath: _pdfPath,
-                    onViewCreated: (controller) {
-                      _pdfController = controller;
-                    },
-                    onRender: (pages) {
-                      setState(() {
-                        totalPages = pages!;
-                      });
-                    },
-                    onPageChanged: (page, _) {
-                      setState(() {
-                        // Save current page annotations
-                        if (pageLines[currentPage] == null) {
-                          pageLines[currentPage] = List.from(lines);
+                ),
+                GestureDetector(
+                  onPanStart: (details) {
+                    setState(() {
+                      currentPoint = details.localPosition;
+                      if (isEraseMode) {
+                        _eraseLine(currentPoint!); // Erase if in eraser mode
+                      }
+                    });
+                  },
+                  onPanUpdate: (details) {
+                    setState(() {
+                      final offset = details.localPosition;
+                      if (isEraseMode) {
+                        _eraseLine(offset);
+                      } else if (isHighlightMode) {
+                        if (highlights.isNotEmpty &&
+                            highlights.last.isDrawing) {
+                          highlights.last.points.add(offset);
                         } else {
-                          pageLines[currentPage] = lines;
+                          highlights.add(DrawnLine(
+                            [offset],
+                            Colors.yellow.withOpacity(0.3),
+                            15.0,
+                            isDrawing: true,
+                          ));
                         }
-                        if (pageHighlights[currentPage] == null) {
-                          pageHighlights[currentPage] = List.from(highlights);
+                      } else {
+                        if (lines.isNotEmpty && lines.last.isDrawing) {
+                          lines.last.points.add(offset);
                         } else {
-                          pageHighlights[currentPage] = highlights;
+                          lines.add(DrawnLine(
+                            [offset],
+                            pointerColor,
+                            pointerSize,
+                            isDrawing: true,
+                          ));
                         }
-
-                        // Switch to new page
-                        currentPage = page!;
-                        lines = pageLines[currentPage] ?? [];
-                        highlights = pageHighlights[currentPage] ?? [];
-                      });
-                    },
+                      }
+                      currentPoint = offset;
+                    });
+                  },
+                  onPanEnd: (_) {
+                    setState(() {
+                      if (isHighlightMode && highlights.isNotEmpty) {
+                        highlights.last.isDrawing = false;
+                      } else if (!isHighlightMode && lines.isNotEmpty) {
+                        lines.last.isDrawing = false;
+                      }
+                      currentPoint = null;
+                    });
+                  },
+                  child: CustomPaint(
+                    size: Size.infinite,
+                    painter: DrawingPainter(
+                      lines,
+                      highlights,
+                    ), // Only current page's annotations
                   ),
                 ),
-                if (!isScrolling)
-                  GestureDetector(
-                    onPanStart: (details) {
-                      setState(() {
-                        currentPoint = details.localPosition;
-                        if (isEraseMode) {
-                          _eraseLine(currentPoint!); // Erase if in eraser mode
-                        }
-                      });
-                    },
-                    onPanUpdate: (details) {
-                      setState(() {
-                        final offset = details.localPosition;
-                        if (isEraseMode) {
-                          _eraseLine(
-                              offset); // Erase annotations for the current page
-                        } else if (isHighlightMode) {
-                          if (highlights.isNotEmpty &&
-                              highlights.last.isDrawing) {
-                            highlights.last.points.add(offset);
-                          } else {
-                            highlights.add(DrawnLine(
-                              [offset],
-                              Colors.yellow.withOpacity(0.3),
-                              15.0,
-                              isDrawing: true,
-                            ));
-                          }
-                        } else {
-                          if (lines.isNotEmpty && lines.last.isDrawing) {
-                            lines.last.points.add(offset);
-                          } else {
-                            lines.add(DrawnLine(
-                              [offset],
-                              pointerColor,
-                              pointerSize,
-                              isDrawing: true,
-                            ));
-                          }
-                        }
-                        currentPoint = offset;
-                      });
-                    },
-                    onPanEnd: (_) {
-                      setState(() {
-                        if (isHighlightMode && highlights.isNotEmpty) {
-                          highlights.last.isDrawing = false;
-                        } else if (!isHighlightMode && lines.isNotEmpty) {
-                          lines.last.isDrawing = false;
-                        }
-                        currentPoint = null;
-                      });
-                    },
-                    child: CustomPaint(
-                      size: Size.infinite,
-                      painter: DrawingPainter(
-                          lines, highlights), // Only current page's annotations
-                    ),
-                  ),
               ],
             ),
       floatingActionButton: _pdfPath != null
@@ -277,122 +225,6 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
     );
   }
 
-  // Show a dialog to select pointer size
-  void _showPointerSizeSelector(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        double selectedSize = pointerSize;
-        return AlertDialog(
-          title: Text('Select Pointer Size'),
-          content: Slider(
-            value: selectedSize,
-            min: 1.0,
-            max: 10.0,
-            divisions: 9,
-            label: '${selectedSize.toStringAsFixed(1)}',
-            onChanged: (double value) {
-              setState(() {
-                selectedSize = value;
-              });
-            },
-          ),
-          actions: [
-            TextButton(
-              child: Text('Cancel'),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            TextButton(
-              child: Text('OK'),
-              onPressed: () {
-                _changePointerSize(selectedSize);
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // Show a dialog to select pointer color
-  void _showPointerColorSelector(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        Color selectedColor = pointerColor;
-        return AlertDialog(
-          title: Text('Select Pointer Color'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Wrap(
-                spacing: 8.0,
-                runSpacing: 8.0,
-                children: [
-                  for (Color color in [
-                    Colors.black,
-                    Colors.red,
-                    Colors.blue,
-                    Colors.green,
-                    Colors.yellow,
-                    Colors.orange,
-                  ])
-                    GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          selectedColor = color;
-                        });
-                      },
-                      child: CircleAvatar(
-                        backgroundColor: color,
-                        radius: 20,
-                        child: selectedColor == color
-                            ? Icon(Icons.check, color: Colors.white)
-                            : null,
-                      ),
-                    ),
-                ],
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              child: Text('Cancel'),
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-            TextButton(
-              child: Text('OK'),
-              onPressed: () {
-                _changePointerColor(selectedColor);
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _toggleMode() {
-    setState(() {
-      if (isEraseMode) {
-        isEraseMode = false; // Switch to normal drawing/highlighting mode
-      } else {
-        isHighlightMode = !isHighlightMode;
-      }
-    });
-  }
-
-  void _toggleEraser() {
-    setState(() {
-      isEraseMode = !isEraseMode; // Toggle eraser mode
-      if (isEraseMode) {
-        isHighlightMode = false; // Ensure highlighting is disabled
-      }
-    });
-  }
-
   Future<void> _pickPDF() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -417,7 +249,6 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   }
 
   void _eraseLine(Offset position) {
-    // Remove the closest line or highlight to the current position
     setState(() {
       lines.removeWhere((line) =>
           line.points.any((point) => (point - position).distance < 10));
@@ -436,9 +267,18 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
     );
 
     if (pdfBytes != null) {
-      final file = await PdfUtils.saveToFile(pdfBytes, "modified_pdf.pdf");
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('PDF saved to ${file.path}')));
+      final file = await PdfUtils.saveToFile(pdfBytes, "a.pdf");
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('PDF saved to ${file.path}')),
+      );
     }
+  }
+
+  void _showPointerSizeSelector(BuildContext context) {
+    // Pointer size selector dialog logic here
+  }
+
+  void _showPointerColorSelector(BuildContext context) {
+    // Pointer color selector dialog logic here
   }
 }
