@@ -223,9 +223,11 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                               : Align(
                                   alignment: Alignment.center,
                                   child: Container(
+                                    color: Colors.red.withOpacity(0.3),
                                     width: pageSize!.width * zoomLevel,
                                     height: pageSize!.height * zoomLevel,
                                     child: CustomPaint(
+                                      isComplex: true,
                                       painter: DrawingPainter(
                                         _getAbsoluteLines(lines),
                                         _getAbsoluteLines(highlights),
@@ -387,7 +389,10 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                   icon: Icon(Icons.zoom_in),
                   tooltip: 'Zoom in',
                   onPressed: () {
-                    _pdfViewerController.zoomLevel += 0.1;
+                    setState(() {
+                      _pdfViewerController.zoomLevel += 0.1;
+                      zoomLevel = _pdfViewerController.zoomLevel;
+                    });
                   },
                 ),
                 IconButton(
@@ -395,7 +400,10 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                   icon: Icon(Icons.zoom_out),
                   tooltip: 'Zoom out',
                   onPressed: () {
-                    _pdfViewerController.zoomLevel -= 0.1;
+                    setState(() {
+                      _pdfViewerController.zoomLevel -= 0.1;
+                      zoomLevel = _pdfViewerController.zoomLevel;
+                    });
                   },
                 ),
               ],
