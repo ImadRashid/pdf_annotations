@@ -40,8 +40,9 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   double pointerSize = 3.0; // Default pointer size
   Color pointerColor = Colors.black; // Default pointer color
   bool showOptions = true;
-  Map<int, List<TextAnnotation>> pageTexts = {};
-  List<TextAnnotation> texts = [];
+  Map<int, List<TextAnnotation>> pageTexts = {}; // Text annotations per page
+  List<TextAnnotation> texts = []; // Current page's text annotations
+
   // Page dimensions and zoom factor
   Size? pageSize;
   double zoomLevel = 1.0;
@@ -111,14 +112,23 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                           } else {
                             pageHighlights[currentPage] = highlights;
                           }
+                          if (pageTexts[currentPage] == null) {
+                            pageTexts[currentPage] = List.from(texts);
+                          } else {
+                            pageTexts[currentPage] = texts;
+                          }
 
+                          // Switch to new page
                           currentPage = details.newPageNumber;
                           _pageController.text =
                               details.newPageNumber.toString();
+
+                          // Load new page annotations
                           lines = pageLines[currentPage] ?? [];
                           highlights = pageHighlights[currentPage] ?? [];
+                          texts = pageTexts[currentPage] ?? [];
 
-                          // Get page dimensions for the current page
+                          // Update page dimensions
                           final PdfDocument pdfDocument = PdfDocument(
                             inputBytes: File(_pdfPath!).readAsBytesSync(),
                           );
@@ -157,10 +167,8 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                               }
                             }
                           },
+
                           onPanUpdate: (details) {
-                            // if (mode == Mode.text) {
-                            //   _resizeSelectedText(details.delta.dy);
-                            // }
                             if (mode != Mode.pan) {
                               setState(() {
                                 final offset =
@@ -261,7 +269,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
         if (pageTexts[currentPage] == null) {
           pageTexts[currentPage] = [];
         }
-        pageTexts[currentPage]!.add(annotation);
+        pageTexts[currentPage]!.add(annotation); // Save to current page
       });
     }
   }
