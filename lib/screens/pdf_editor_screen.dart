@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
+import '../models/text_annotation.dart';
 import '/models/drawn_line.dart';
 import '/widgets/drawing_painter.dart';
 import '/utils/pdf_utils.dart';
@@ -39,7 +40,8 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   double pointerSize = 3.0; // Default pointer size
   Color pointerColor = Colors.black; // Default pointer color
   bool showOptions = true;
-
+  Map<int, List<TextAnnotation>> pageTexts = {};
+  List<TextAnnotation> texts = [];
   // Page dimensions and zoom factor
   Size? pageSize;
   double zoomLevel = 1.0;
@@ -135,18 +137,30 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                       AbsorbPointer(
                         absorbing: mode == Mode.pan,
                         child: GestureDetector(
+                          // onTapUp: (details) {
+                          //   if (mode == Mode.text) {
+                          //     _selectTextAnnotation(details.localPosition);
+                          //   }
+                          // },
                           onPanStart: (details) {
                             if (mode != Mode.pan) {
-                              setState(() {
-                                currentPoint =
-                                    _getNormalizedOffset(details.localPosition);
-                                if (mode == Mode.erase) {
-                                  _eraseLine(currentPoint!);
-                                }
-                              });
+                              if (mode == Mode.text) {
+                                _addTextAnnotation(details.localPosition);
+                              } else {
+                                setState(() {
+                                  currentPoint = _getNormalizedOffset(
+                                      details.localPosition);
+                                  if (mode == Mode.erase) {
+                                    _eraseLine(currentPoint!);
+                                  }
+                                });
+                              }
                             }
                           },
                           onPanUpdate: (details) {
+                            // if (mode == Mode.text) {
+                            //   _resizeSelectedText(details.delta.dy);
+                            // }
                             if (mode != Mode.pan) {
                               setState(() {
                                 final offset =
@@ -207,6 +221,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                                       painter: DrawingPainter(
                                         _getAbsoluteLines(lines),
                                         _getAbsoluteLines(highlights),
+                                        _getAbsoluteTexts(texts),
                                       ),
                                     ),
                                   ),
@@ -220,6 +235,92 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
               ],
             ),
     );
+  }
+
+  List<TextAnnotation> _getAbsoluteTexts(List<TextAnnotation> normalizedTexts) {
+    return normalizedTexts
+        .map((annotation) => TextAnnotation(
+              _getAbsoluteOffset(annotation.position),
+              annotation.text,
+              annotation.style,
+            ))
+        .toList();
+  }
+
+  void _addTextAnnotation(Offset localPosition) async {
+    final normalizedPosition = _getNormalizedOffset(localPosition);
+    String? inputText = await _showTextInputDialog();
+    if (inputText != null && inputText.isNotEmpty) {
+      setState(() {
+        final annotation = TextAnnotation(
+          normalizedPosition,
+          inputText,
+          TextStyle(color: pointerColor, fontSize: pointerSize * 4),
+        );
+        texts.add(annotation);
+        if (pageTexts[currentPage] == null) {
+          pageTexts[currentPage] = [];
+        }
+        pageTexts[currentPage]!.add(annotation);
+      });
+    }
+  }
+
+  Future<String?> _showTextInputDialog() async {
+    TextEditingController textController = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Enter Text'),
+          content: TextField(
+            controller: textController,
+            decoration: InputDecoration(hintText: 'Type here'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(textController.text),
+              child: Text('Add'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _selectTextAnnotation(Offset localPosition) {
+    final normalizedPosition = _getNormalizedOffset(localPosition);
+    setState(() {
+      for (var text in texts) {
+        final textBounds = Rect.fromLTWH(
+          text.position.dx,
+          text.position.dy,
+          text.style.fontSize! * text.text.length * 0.6, // Approximation
+          text.style.fontSize!,
+        );
+        if (textBounds.contains(normalizedPosition)) {
+          text.isSelected = !text.isSelected;
+        } else {
+          text.isSelected = false;
+        }
+      }
+    });
+  }
+
+  void _resizeSelectedText(double delta) {
+    setState(() {
+      for (var text in texts) {
+        if (text.isSelected) {
+          double newSize =
+              (text.style.fontSize! + delta / 10).clamp(10.0, 100.0);
+          text.style = text.style.copyWith(fontSize: newSize);
+        }
+      }
+    });
   }
 
   Widget _buildToolbar() {
@@ -263,6 +364,14 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                   tooltip: 'Pan',
                   onPressed: () {
                     _updateMode(Mode.pan);
+                  },
+                ),
+                IconButton(
+                  color: mode == Mode.text ? Colors.blue : Colors.black,
+                  icon: Icon(Icons.text_fields),
+                  tooltip: 'Add Text',
+                  onPressed: () {
+                    _updateMode(Mode.text);
                   },
                 ),
                 IconButton(
@@ -349,6 +458,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   Offset _getNormalizedOffset(Offset localPosition) {
     if (pageSize == null || zoomLevel == 0) return localPosition;
 
+    // Adjust for zoom and map to normalized coordinates [0, 1]
     return Offset(
       localPosition.dx / (pageSize!.width * zoomLevel),
       localPosition.dy / (pageSize!.height * zoomLevel),
@@ -358,6 +468,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   Offset _getAbsoluteOffset(Offset normalizedOffset) {
     if (pageSize == null) return normalizedOffset;
 
+    // Map normalized coordinates [0, 1] back to absolute page coordinates
     return Offset(
       normalizedOffset.dx * pageSize!.width * zoomLevel,
       normalizedOffset.dy * pageSize!.height * zoomLevel,

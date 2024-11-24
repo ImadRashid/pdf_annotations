@@ -1,8 +1,11 @@
-import 'dart:ui';
+import 'package:flutter/material.dart';
 
 class TextAnnotation {
-  final String text;
-  final Offset position;
+  Offset position;
+  String text;
+  TextStyle style;
+  bool isSelected;
 
-  TextAnnotation(this.text, this.position);
+  TextAnnotation(this.position, this.text, this.style,
+      {this.isSelected = false});
 }

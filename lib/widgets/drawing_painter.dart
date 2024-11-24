@@ -7,9 +7,9 @@ import '/models/drawn_line.dart';
 class DrawingPainter extends CustomPainter {
   final List<DrawnLine> lines;
   final List<DrawnLine> highlights;
-  final List<TextAnnotation>? textAnnotations;
+  final List<TextAnnotation> texts;
 
-  DrawingPainter(this.lines, this.highlights, {this.textAnnotations});
+  DrawingPainter(this.lines, this.highlights, this.texts);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -17,36 +17,38 @@ class DrawingPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    // Draw lines
     for (final line in lines) {
       paint.color = line.color;
       paint.strokeWidth = line.strokeWidth;
       _drawPath(canvas, line);
     }
 
-    // Draw highlights
     for (final highlight in highlights) {
       paint.color = highlight.color;
       paint.strokeWidth = highlight.strokeWidth;
       _drawPath(canvas, highlight);
     }
 
-    // Draw text annotations
-    if (textAnnotations != null) {
-      for (final annotation in textAnnotations!) {
-        final textPainter = TextPainter(
-          text: TextSpan(
-            text: annotation.text,
-            style: TextStyle(
-              color: Colors.black,
-              fontSize: 14, // Default text size
-            ),
-          ),
-          textDirection: TextDirection.ltr,
-        );
+    for (final annotation in texts) {
+      final textPainter = TextPainter(
+        text: TextSpan(text: annotation.text, style: annotation.style),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      textPainter.paint(canvas, annotation.position);
 
-        textPainter.layout();
-        textPainter.paint(canvas, annotation.position);
+      // Highlight selected text
+      if (annotation.isSelected) {
+        final rect = Rect.fromLTWH(
+          annotation.position.dx,
+          annotation.position.dy,
+          textPainter.width,
+          textPainter.height,
+        );
+        final highlightPaint = Paint()
+          ..color = Colors.blue.withOpacity(0.3)
+          ..style = PaintingStyle.fill;
+        canvas.drawRect(rect, highlightPaint);
       }
     }
   }
