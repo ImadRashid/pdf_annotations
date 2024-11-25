@@ -410,7 +410,9 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                 ),
                 IconButton(
                   color: mode == Mode.draw ? Colors.red : Colors.black,
-                  icon: Icon(Icons.brush, color: pointerColor),
+                  icon: Icon(
+                    Icons.brush,
+                  ),
                   tooltip: 'Draw',
                   onPressed: () {
                     _updateMode(Mode.draw);
@@ -441,7 +443,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                   },
                 ),
                 IconButton(
-                  color: mode == Mode.pan ? Colors.red : Colors.black,
+                  // color: mode == Mode.pan ? Colors.red : Colors.black,
                   icon: Icon(Icons.zoom_in),
                   tooltip: 'Zoom in',
                   onPressed: () {
@@ -452,7 +454,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                   },
                 ),
                 IconButton(
-                  color: mode == Mode.pan ? Colors.red : Colors.black,
+                  // color: mode == Mode.pan ? Colors.red : Colors.black,
                   icon: Icon(Icons.zoom_out),
                   tooltip: 'Zoom out',
                   onPressed: () {
@@ -512,7 +514,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                 ),
               ),
               IconButton(
-                icon: Icon(Icons.arrow_forward),
+                icon: const Icon(Icons.arrow_forward),
                 onPressed: () {
                   if (currentPage < totalPages) {
                     _pdfViewerController.nextPage();
