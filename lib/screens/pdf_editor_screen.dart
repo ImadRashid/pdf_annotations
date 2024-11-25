@@ -2,8 +2,10 @@ import 'dart:developer';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:io';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:open_file/open_file.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:syncfusion_flutter_pdfviewer/pdfviewer.dart';
 import '../models/text_annotation.dart';
@@ -46,12 +48,17 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   // Page dimensions and zoom factor
   Size? pageSize;
   double zoomLevel = 1.0;
+  bool isZooming = false;
   TextEditingController _pageController = TextEditingController();
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Edit PDF"),
+        title: Text("Edit PDF ${zoomLevel}"),
+        leading: IconButton(
+          icon: Icon(Icons.close),
+          onPressed: _closePDF,
+        ),
         actions: [
           if (_pdfPath != null) ...[
             IconButton(
@@ -63,14 +70,25 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
               onPressed: _saveModifiedPDF,
             ),
           ],
-          IconButton(
-            icon: Icon(Icons.folder_open),
-            onPressed: _pickPDF,
-          ),
+          // IconButton(
+          //   icon: Icon(Icons.folder_open),
+          //   onPressed: _pickPDF,
+          // ),
         ],
       ),
       body: _pdfPath == null
-          ? Center(child: Text("Open a PDF to start editing"))
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text("Open a PDF to start editing"),
+                  TextButton(
+                    onPressed: _pickPDF,
+                    child: const Text("Open PDF"),
+                  )
+                ],
+              ),
+            )
           : Column(
               children: [
                 Expanded(
@@ -101,23 +119,6 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                           pdfDocument.dispose();
                         },
                         onPageChanged: (details) async {
-                          // Save current page annotations
-                          if (pageLines[currentPage] == null) {
-                            pageLines[currentPage] = List.from(lines);
-                          } else {
-                            pageLines[currentPage] = lines;
-                          }
-                          if (pageHighlights[currentPage] == null) {
-                            pageHighlights[currentPage] = List.from(highlights);
-                          } else {
-                            pageHighlights[currentPage] = highlights;
-                          }
-                          if (pageTexts[currentPage] == null) {
-                            pageTexts[currentPage] = List.from(texts);
-                          } else {
-                            pageTexts[currentPage] = texts;
-                          }
-
                           // Switch to new page
                           currentPage = details.newPageNumber;
                           _pageController.text =
@@ -144,99 +145,127 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                           pdfDocument.dispose();
                         },
                       ),
-                      AbsorbPointer(
-                        absorbing: mode == Mode.pan,
-                        child: GestureDetector(
-                          // onTapUp: (details) {
-                          //   if (mode == Mode.text) {
-                          //     _selectTextAnnotation(details.localPosition);
-                          //   }
-                          // },
-                          onPanStart: (details) {
-                            if (mode != Mode.pan) {
-                              if (mode == Mode.text) {
-                                _addTextAnnotation(details.localPosition);
-                              } else {
-                                setState(() {
-                                  currentPoint = _getNormalizedOffset(
-                                      details.localPosition);
-                                  if (mode == Mode.erase) {
-                                    _eraseLine(currentPoint!);
-                                  }
-                                });
-                              }
-                            }
-                          },
+                      GestureDetector(
+                        onScaleStart: (details) {
+                          print("Scale start: ${details.pointerCount}");
+                          // Check if this is a zoom or pan gesture
+                          setState(() {
+                            isZooming = details.pointerCount > 1;
+                          });
 
-                          onPanUpdate: (details) {
-                            if (mode != Mode.pan) {
+                          if (!isZooming && mode != Mode.pan) {
+                            if (mode == Mode.text) {
+                              _addTextAnnotation(details.localFocalPoint);
+                            } else {
                               setState(() {
-                                final offset =
-                                    _getNormalizedOffset(details.localPosition);
+                                currentPoint = _getNormalizedOffset(
+                                    details.localFocalPoint);
                                 if (mode == Mode.erase) {
-                                  _eraseLine(offset);
-                                } else if (mode == Mode.highlight) {
-                                  if (highlights.isNotEmpty &&
-                                      highlights.last.isDrawing) {
-                                    highlights.last.points.add(offset);
-                                  } else {
-                                    highlights.add(DrawnLine(
-                                      [offset],
-                                      Colors.yellow.withOpacity(0.3),
-                                      15.0,
-                                      isDrawing: true,
-                                    ));
-                                  }
-                                } else if (mode == Mode.draw) {
-                                  if (lines.isNotEmpty &&
-                                      lines.last.isDrawing) {
-                                    lines.last.points.add(offset);
-                                  } else {
-                                    lines.add(DrawnLine(
-                                      [offset],
-                                      pointerColor,
-                                      pointerSize,
-                                      isDrawing: true,
-                                    ));
-                                  }
+                                  _eraseLine(currentPoint!);
                                 }
-                                currentPoint = offset;
                               });
                             }
-                          },
-                          onPanEnd: (_) {
-                            if (mode != Mode.pan) {
+                          }
+                        },
+                        onScaleUpdate: (details) {
+                          if (isZooming) {
+                            print("Zooming");
+                            if ((details.scale - 1.0).abs() > 0.01) {
+                              // Threshold for significant changes
                               setState(() {
-                                if (mode == Mode.highlight &&
-                                    highlights.isNotEmpty) {
-                                  highlights.last.isDrawing = false;
-                                } else if (mode == Mode.draw &&
-                                    lines.isNotEmpty) {
-                                  lines.last.isDrawing = false;
-                                }
-                                currentPoint = null;
+                                zoomLevel =
+                                    (zoomLevel * details.scale).clamp(1.0, 3.0);
+
+                                _pdfViewerController.zoomLevel = zoomLevel;
                               });
                             }
-                          },
-                          child: pageSize == null
-                              ? SizedBox.shrink()
-                              : Align(
-                                  alignment: Alignment.center,
-                                  child: Container(
-                                    color: Colors.red.withOpacity(0.3),
-                                    width: pageSize!.width * zoomLevel,
-                                    height: pageSize!.height * zoomLevel,
-                                    child: CustomPaint(
-                                      isComplex: true,
-                                      painter: DrawingPainter(
-                                        _getAbsoluteLines(lines),
-                                        _getAbsoluteLines(highlights),
-                                        _getAbsoluteTexts(texts),
-                                      ),
+                          } else if (mode != Mode.pan) {
+                            print("Single finger action");
+                            setState(() {
+                              final offset =
+                                  _getNormalizedOffset(details.localFocalPoint);
+                              if (mode == Mode.erase) {
+                                _eraseLine(offset);
+                              } else if (mode == Mode.highlight) {
+                                if (highlights.isNotEmpty &&
+                                    highlights.last.isDrawing) {
+                                  highlights.last.points.add(offset);
+                                } else {
+                                  final newHighlight = DrawnLine(
+                                    [offset],
+                                    Colors.yellow.withOpacity(0.3),
+                                    15.0,
+                                    isDrawing: true,
+                                  );
+                                  highlights.add(newHighlight);
+
+                                  // Save the new highlight immediately
+                                  if (pageHighlights[currentPage] == null) {
+                                    pageHighlights[currentPage] = [];
+                                  }
+                                  pageHighlights[currentPage]!
+                                      .add(newHighlight);
+                                }
+                              } else if (mode == Mode.draw) {
+                                if (lines.isNotEmpty && lines.last.isDrawing) {
+                                  lines.last.points.add(offset);
+                                } else {
+                                  final newLine = DrawnLine(
+                                    [offset],
+                                    pointerColor,
+                                    pointerSize,
+                                    isDrawing: true,
+                                  );
+                                  lines.add(newLine);
+
+                                  // Save the new line immediately
+                                  if (pageLines[currentPage] == null) {
+                                    pageLines[currentPage] = [];
+                                  }
+                                  pageLines[currentPage]!.add(newLine);
+                                }
+                              }
+                              currentPoint = offset;
+                            });
+                          }
+                        },
+                        onScaleEnd: (details) {
+                          print("Scale end");
+                          setState(() {
+                            isZooming = false;
+                          });
+
+                          if (mode != Mode.pan) {
+                            setState(() {
+                              if (mode == Mode.highlight &&
+                                  highlights.isNotEmpty) {
+                                highlights.last.isDrawing = false;
+                              } else if (mode == Mode.draw &&
+                                  lines.isNotEmpty) {
+                                lines.last.isDrawing = false;
+                              }
+                              currentPoint = null;
+                            });
+                          }
+                        },
+                        child: pageSize == null
+                            ? SizedBox.shrink()
+                            : Align(
+                                alignment: Alignment.center,
+                                child: Container(
+                                  color: Colors.red.withOpacity(0.3),
+                                  width: pageSize!.width * zoomLevel,
+                                  height: pageSize!.height * zoomLevel,
+                                  child: CustomPaint(
+                                    isComplex: true,
+                                    painter: DrawingPainter(
+                                      _getAbsoluteLines(lines),
+                                      _getAbsoluteLines(highlights),
+                                      _getAbsoluteTexts(texts),
                                     ),
                                   ),
                                 ),
-                        ),
+                              ),
                       ),
                     ],
                   ),
@@ -245,6 +274,31 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
               ],
             ),
     );
+  }
+
+  _closePDF() {
+    setState(() {
+      _pdfPath = null;
+      mode = Mode.pan;
+      _pdfPath;
+      pageLines = {}; // Annotations per page
+      pageHighlights = {};
+      currentPage = 0; // Track the current page
+      totalPages = 0; // Total pages in the PDF
+      lines = [];
+      highlights = [];
+      currentPoint;
+      pointerSize = 3.0; // Default pointer size
+      pointerColor = Colors.black; // Default pointer color
+      showOptions = true;
+      pageTexts = {}; // Text annotations per page
+      texts = []; // Current page's text annotations
+
+      // Page dimensions and zoom factor
+      pageSize;
+      zoomLevel = 1.0;
+      _pageController = TextEditingController();
+    });
   }
 
   List<TextAnnotation> _getAbsoluteTexts(List<TextAnnotation> normalizedTexts) {
@@ -268,10 +322,12 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
           TextStyle(color: pointerColor, fontSize: pointerSize * 4),
         );
         texts.add(annotation);
+
+        // Save the annotation immediately
         if (pageTexts[currentPage] == null) {
           pageTexts[currentPage] = [];
         }
-        pageTexts[currentPage]!.add(annotation); // Save to current page
+        pageTexts[currentPage]!.add(annotation);
       });
     }
   }
@@ -472,12 +528,11 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   }
 
   Offset _getNormalizedOffset(Offset localPosition) {
-    if (pageSize == null || zoomLevel == 0) return localPosition;
+    if (pageSize == null) return localPosition;
 
-    // Adjust for zoom and map to normalized coordinates [0, 1]
     return Offset(
-      localPosition.dx / (pageSize!.width * zoomLevel),
-      localPosition.dy / (pageSize!.height * zoomLevel),
+      localPosition.dx / pageSize!.width,
+      localPosition.dy / pageSize!.height,
     );
   }
 
@@ -560,26 +615,54 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
 
   void _eraseLine(Offset position) {
     setState(() {
-      lines.removeWhere((line) =>
-          line.points.any((point) => (point - position).distance < 10));
-      highlights.removeWhere((highlight) =>
-          highlight.points.any((point) => (point - position).distance < 10));
+      lines.removeWhere((line) {
+        final isErased =
+            line.points.any((point) => (point - position).distance < 10);
+        if (isErased) {
+          // Remove the line from the saved annotations
+          pageLines[currentPage]?.remove(line);
+        }
+        return isErased;
+      });
+
+      highlights.removeWhere((highlight) {
+        final isErased =
+            highlight.points.any((point) => (point - position).distance < 10);
+        if (isErased) {
+          // Remove the highlight from the saved annotations
+          pageHighlights[currentPage]?.remove(highlight);
+        }
+        return isErased;
+      });
     });
   }
 
   Future<void> _saveModifiedPDF() async {
+    print("Zoom Level = ${zoomLevel}");
     if (_pdfPath == null) return;
 
     final Uint8List? pdfBytes = await PdfUtils.overlayDrawingOnPDF(
       _pdfPath!,
       pageLines,
       pageHighlights,
+      pageTexts,
     );
 
     if (pdfBytes != null) {
-      final file = await PdfUtils.saveToFile(pdfBytes, "a.pdf");
+      final file = await PdfUtils.saveToFile(pdfBytes, "modified.pdf");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('PDF saved to ${file.path}')),
+      );
+
+      final result = await OpenFile.open(file.path);
+      if (result.type != ResultType.done) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not open PDF: ${result.message}')),
+        );
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to save annotations to the PDF.')),
       );
     }
   }
