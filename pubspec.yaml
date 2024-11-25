@@ -41,6 +41,8 @@ dependencies:
   syncfusion_flutter_pdfviewer: ^27.2.3
   open_file:
   vector_math:
+  printing:
+  dart_ui_isolate:
 
 
 dev_dependencies:
