@@ -41,6 +41,9 @@ dependencies:
   syncfusion_flutter_pdfviewer: ^27.2.3
   open_file:
   vector_math:
+  image: ^4.3.0
+  screenshot: ^3.0.0
+  
 
 
 dev_dependencies:
