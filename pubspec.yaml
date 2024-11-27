@@ -43,6 +43,8 @@ dependencies:
   vector_math:
   image: ^4.3.0
   screenshot: ^3.0.0
+  printing: ^5.13.4
+  #pdf_image_renderer: ^0.7.0
   
 
 

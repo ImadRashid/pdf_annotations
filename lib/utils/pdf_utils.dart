@@ -157,13 +157,21 @@ class PdfUtils {
   }
 
   static Future<bool> requestStoragePermission() async {
-    if (Platform.isAndroid) {
-      var status = await Permission.storage.status;
-      if (!status.isGranted) {
-        status = await Permission.storage.request();
+    try {
+      if (Platform.isAndroid) {
+        var status = await Permission.storage.status;
+        print("status === ${status.isGranted}");
+        if (!status.isGranted) {
+          print("not granted");
+          status = await Permission.storage.request();
+          print("requested");
+        }
+        return status.isGranted;
       }
-      return status.isGranted;
+    } catch (e) {
+      print("error==> $e");
     }
+
     return true;
   }
 }
