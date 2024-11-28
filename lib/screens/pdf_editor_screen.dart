@@ -438,6 +438,9 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   }
 
   Future<Uint8List?> _captureScreenshot() async {
+    _pdfViewerController.zoomLevel = 1.0;
+    zoomLevel = _pdfViewerController.zoomLevel;
+    setState(() {});
     try {
       final Uint8List? screenshot =
           await screenshotController.capture(pixelRatio: 4);
@@ -486,6 +489,8 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
   }
 
   Future<void> _savePdf() async {
+    _isLoading = true;
+    setState(() {});
     print("pathh = $_pdfPath");
     try {
       final originalPdfFile = File(_pdfPath!);
@@ -565,6 +570,8 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
       print('Error saving PDF: $e');
       print(stackTrace);
     }
+    _isLoading = false;
+    setState(() {});
   }
 
   List<ShapeAnnotation> _getAbsoluteShapes(
