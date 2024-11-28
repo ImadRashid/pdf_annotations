@@ -242,9 +242,14 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                                   }
                                 },
                                 onTapDown: (details) {
+                                  print("heree");
                                   if (mode == Mode.text) {
                                     _selectTextAnnotation(
                                         details.localPosition);
+                                  }
+
+                                  if (mode == Mode.text) {
+                                    _addTextAnnotation(details.localPosition);
                                   }
                                 },
                                 onScaleUpdate: (details) {
