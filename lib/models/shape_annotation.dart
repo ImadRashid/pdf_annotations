@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:pdf_annotations/screens/pdf_editor_screen.dart';
 
 class ShapeAnnotation {
-  final Offset start;
-  final Offset end;
+  Offset start;
+  Offset end;
   final Mode shapeType;
   final Color color;
   final double strokeWidth;

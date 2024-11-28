@@ -12,6 +12,7 @@ class DrawingPainter extends CustomPainter {
   final List<TextAnnotation> texts;
   final List<ShapeAnnotation> shapes;
   final ShapeAnnotation? currentShape;
+  final Offset panOffset; // Add panOffset here
 
   DrawingPainter(
     this.lines,
@@ -19,6 +20,7 @@ class DrawingPainter extends CustomPainter {
     this.texts, {
     this.shapes = const [],
     this.currentShape,
+    required this.panOffset, // Initialize panOffset
   });
 
   @override
@@ -27,34 +29,35 @@ class DrawingPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round;
 
-    // Draw freehand lines
+    // Draw freehand lines with pan offset
     for (final line in lines) {
       paint.color = line.color;
       paint.strokeWidth = line.strokeWidth;
-      _drawPath(canvas, line);
+      _drawPath(canvas, line, panOffset); // Pass panOffset to _drawPath
     }
 
-    // Draw highlights
+    // Draw highlights with pan offset
     for (final highlight in highlights) {
       paint.color = highlight.color;
       paint.strokeWidth = highlight.strokeWidth;
-      _drawPath(canvas, highlight);
+      _drawPath(canvas, highlight, panOffset); // Pass panOffset to _drawPath
     }
 
-    // Draw text annotations
+    // Draw text annotations with pan offset
     for (final annotation in texts) {
       final textPainter = TextPainter(
         text: TextSpan(text: annotation.text, style: annotation.style),
         textDirection: TextDirection.ltr,
       );
       textPainter.layout();
-      textPainter.paint(canvas, annotation.position);
+      textPainter.paint(canvas,
+          annotation.position + panOffset); // Apply pan offset to position
 
       if (annotation.isSelected) {
         // Draw selection rectangle
         final rect = Rect.fromLTWH(
-          annotation.position.dx,
-          annotation.position.dy,
+          annotation.position.dx + panOffset.dx,
+          annotation.position.dy + panOffset.dy,
           textPainter.width,
           textPainter.height,
         );
@@ -65,23 +68,27 @@ class DrawingPainter extends CustomPainter {
       }
     }
 
-    // Draw shapes
+    // Draw shapes with pan offset
     for (final shape in shapes) {
-      _drawShape(canvas, shape);
+      _drawShape(canvas, shape, panOffset); // Pass panOffset to _drawShape
     }
 
-    // Draw the current shape (if any)
+    // Draw the current shape (if any) with pan offset
     if (currentShape != null) {
-      _drawShape(canvas, currentShape!);
+      _drawShape(
+          canvas, currentShape!, panOffset); // Pass panOffset to _drawShape
     }
   }
 
-  void _drawPath(Canvas canvas, DrawnLine line) {
+  void _drawPath(Canvas canvas, DrawnLine line, Offset panOffset) {
     if (line.points.isEmpty) return;
 
-    final path = Path()..moveTo(line.points.first.dx, line.points.first.dy);
+    final path = Path()
+      ..moveTo(line.points.first.dx + panOffset.dx,
+          line.points.first.dy + panOffset.dy);
     for (int i = 1; i < line.points.length; i++) {
-      path.lineTo(line.points[i].dx, line.points[i].dy);
+      path.lineTo(
+          line.points[i].dx + panOffset.dx, line.points[i].dy + panOffset.dy);
     }
     canvas.drawPath(
         path,
@@ -92,7 +99,7 @@ class DrawingPainter extends CustomPainter {
           ..strokeCap = StrokeCap.round);
   }
 
-  void _drawShape(Canvas canvas, ShapeAnnotation shape) {
+  void _drawShape(Canvas canvas, ShapeAnnotation shape, Offset panOffset) {
     final paint = Paint()
       ..color = shape.color
       ..style = PaintingStyle.stroke
@@ -100,31 +107,35 @@ class DrawingPainter extends CustomPainter {
 
     switch (shape.shapeType) {
       case Mode.line:
-        // Draw a straight line
-        canvas.drawLine(shape.start, shape.end, paint);
+        // Draw a straight line with pan offset
+        canvas.drawLine(
+          shape.start + panOffset,
+          shape.end + panOffset,
+          paint,
+        );
         break;
 
       case Mode.rectangle:
-        // Draw a rectangle
+        // Draw a rectangle with pan offset
         canvas.drawRect(
-          Rect.fromPoints(shape.start, shape.end),
+          Rect.fromPoints(shape.start + panOffset, shape.end + panOffset),
           paint,
         );
         break;
 
       case Mode.circle:
-        // Draw a circle
+        // Draw a circle with pan offset
         final radius = (shape.end - shape.start).distance / 2;
         final center = Offset(
-          (shape.start.dx + shape.end.dx) / 2,
-          (shape.start.dy + shape.end.dy) / 2,
+          (shape.start.dx + shape.end.dx) / 2 + panOffset.dx,
+          (shape.start.dy + shape.end.dy) / 2 + panOffset.dy,
         );
         canvas.drawCircle(center, radius, paint);
         break;
 
       case Mode.arrow:
-        // Draw an arrow
-        _drawArrow(canvas, shape, paint);
+        // Draw an arrow with pan offset
+        _drawArrow(canvas, shape, paint, panOffset);
         break;
 
       default:
@@ -132,7 +143,8 @@ class DrawingPainter extends CustomPainter {
     }
   }
 
-  void _drawArrow(Canvas canvas, ShapeAnnotation shape, Paint paint) {
+  void _drawArrow(
+      Canvas canvas, ShapeAnnotation shape, Paint paint, Offset panOffset) {
     final arrowLength = 15.0; // Length of the arrowhead lines
     final angle = 30.0 * (math.pi / 180.0); // Angle of the arrowhead
 
@@ -140,22 +152,22 @@ class DrawingPainter extends CustomPainter {
     final dy = shape.end.dy - shape.start.dy;
     final theta = math.atan2(dy, dx);
 
-    // Calculate arrowhead points
+    // Calculate arrowhead points with pan offset
     final arrowTip1 = Offset(
-      shape.end.dx - arrowLength * math.cos(theta - angle),
-      shape.end.dy - arrowLength * math.sin(theta - angle),
+      shape.end.dx - arrowLength * math.cos(theta - angle) + panOffset.dx,
+      shape.end.dy - arrowLength * math.sin(theta - angle) + panOffset.dy,
     );
     final arrowTip2 = Offset(
-      shape.end.dx - arrowLength * math.cos(theta + angle),
-      shape.end.dy - arrowLength * math.sin(theta + angle),
+      shape.end.dx - arrowLength * math.cos(theta + angle) + panOffset.dx,
+      shape.end.dy - arrowLength * math.sin(theta + angle) + panOffset.dy,
     );
 
     // Draw the arrow body
-    canvas.drawLine(shape.start, shape.end, paint);
+    canvas.drawLine(shape.start + panOffset, shape.end + panOffset, paint);
 
     // Draw the arrowhead
-    canvas.drawLine(shape.end, arrowTip1, paint);
-    canvas.drawLine(shape.end, arrowTip2, paint);
+    canvas.drawLine(shape.end + panOffset, arrowTip1, paint);
+    canvas.drawLine(shape.end + panOffset, arrowTip2, paint);
   }
 
   @override
