@@ -1,326 +1,493 @@
-import 'dart:typed_data';
+import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
+import 'package:open_file/open_file.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'package:file_picker/file_picker.dart';
-import 'dart:io';
 
-class PdfPageViewCanvas extends StatefulWidget {
-  @override
-  _PdfPageViewCanvasState createState() => _PdfPageViewCanvasState();
+void main() {
+  runApp(DrawingApp());
 }
 
-class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
-  List<ui.Image> _pdfImages = [];
-  int _totalPages = 0;
-  String? _selectedPdfPath;
-  List<List<Offset?>> _drawings = [];
-  int _currentPage = 0;
-  bool isHandMode = false;
-  double _scale = 1.0;
-  Offset _offset = Offset(0, 0);
-  late Offset _lastFocalPoint;
+class DrawingApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Drawing App',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        useMaterial3: true,
+      ),
+      home: ZoomableDrawingCanvas(),
+    );
+  }
+}
+
+class DrawingLine {
+  final List<Offset> points;
+  final Color color;
+  final double strokeWidth;
+  final bool isEraser;
+
+  DrawingLine({
+    required this.points,
+    required this.color,
+    required this.strokeWidth,
+    this.isEraser = false,
+  });
+
+  List<Offset> getTransformedPoints(double zoom, Offset offset) {
+    return points.map((point) {
+      return (point * zoom) + offset;
+    }).toList();
+  }
+}
+
+class ZoomableDrawingCanvas extends StatefulWidget {
+  @override
+  _ZoomableDrawingCanvasState createState() => _ZoomableDrawingCanvasState();
+}
+
+class _ZoomableDrawingCanvasState extends State<ZoomableDrawingCanvas> {
+  List<DrawingLine> lines = [];
+  DrawingLine? currentLine;
+
+  double zoom = 1.0;
+  Offset offset = Offset.zero;
+  bool isDrawingMode = true;
+  bool isErasing = false;
+  bool isDrawingActive = false;
+
+  double strokeWidth = 2.0;
+  double eraserWidth = 20.0;
+
+  double previousZoom = 1.0;
+  Offset previousOffset = Offset.zero;
+
+  static const double canvasWidth = 600;
+  static const double canvasHeight = 800;
+  final GlobalKey canvasKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('PDF Viewer with Drawing'),
+        title: Text('Drawing Canvas'),
         actions: [
-          IconButton(
-            icon: Icon(Icons.folder_open),
-            onPressed: _pickPdfFile,
+          ToggleButtons(
+            isSelected: [
+              isDrawingMode && !isErasing,
+              !isDrawingMode,
+              isDrawingMode && isErasing
+            ],
+            onPressed: (int index) {
+              setState(() {
+                currentLine = null; // Clear current line when switching modes
+                if (index == 0) {
+                  isDrawingMode = true;
+                  isErasing = false;
+                } else if (index == 1) {
+                  isDrawingMode = false;
+                  isErasing = false;
+                } else if (index == 2) {
+                  isDrawingMode = true;
+                  isErasing = true;
+                }
+              });
+            },
+            children: [
+              Tooltip(
+                message: 'Pen Tool',
+                child: Icon(Icons.edit),
+              ),
+              Tooltip(
+                message: 'Pan/Zoom Tool',
+                child: Icon(Icons.pan_tool),
+              ),
+              Tooltip(
+                message: 'Eraser Tool',
+                child: Icon(Icons.auto_fix_high),
+              ),
+            ],
           ),
           IconButton(
-            icon: Icon(isHandMode ? Icons.pan_tool : Icons.brush),
-            onPressed: _toggleDrawingMode,
+            icon: Icon(Icons.save),
+            onPressed: _exportToPdf,
+            tooltip: 'Export to PDF',
           ),
         ],
       ),
-      body: _selectedPdfPath == null
-          ? Center(child: Text('Please select a PDF file to display'))
-          : _pdfImages.isEmpty
-              ? Center(child: CircularProgressIndicator())
-              : Column(
-                  children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onScaleStart: (details) {
-                          _lastFocalPoint = details.localFocalPoint;
-                        },
-                        onScaleUpdate: (details) {
-                          if (isHandMode) {
-                            setState(() {
-                              _offset = _offset +
-                                  details.localFocalPoint -
-                                  _lastFocalPoint;
-                              _lastFocalPoint = details.localFocalPoint;
-                            });
-                          } else {
-                            setState(() {
-                              _scale = (_scale * details.scale).clamp(1.0, 3.0);
-                            });
-                          }
-                        },
-                        onPanUpdate: isHandMode
-                            ? (details) {
-                                setState(() {
-                                  _offset +=
-                                      details.localPosition - _lastFocalPoint;
-                                });
-                                _lastFocalPoint = details.localPosition;
-                              }
-                            : null,
-                        child: Stack(
-                          children: [
-                            CustomPaint(
-                              painter: PdfPagePainter(
-                                _pdfImages[_currentPage],
-                                _scale,
-                                _offset,
-                              ),
-                              child: Container(),
-                            ),
-                            CustomPaint(
-                              painter: DrawingPainter(
-                                _drawings[_currentPage],
-                                _scale,
-                                _offset,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        ElevatedButton(
-                          onPressed: _currentPage > 0
-                              ? () {
-                                  setState(() {
-                                    _currentPage--;
-                                  });
-                                }
-                              : null,
-                          child: Text('Back'),
-                        ),
-                        Text(
-                          'Page ${_currentPage + 1} of $_totalPages',
-                          style: TextStyle(fontSize: 16),
-                        ),
-                        ElevatedButton(
-                          onPressed: _currentPage < _totalPages - 1
-                              ? () {
-                                  setState(() {
-                                    _currentPage++;
-                                  });
-                                }
-                              : null,
-                          child: Text('Next'),
-                        ),
-                      ],
-                    ),
-                  ],
+      body: Center(
+        child: ClipRect(
+          child: Container(
+            width: canvasWidth,
+            height: canvasHeight,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: Colors.grey),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withOpacity(0.5),
+                  spreadRadius: 2,
+                  blurRadius: 5,
+                  offset: Offset(0, 3),
                 ),
+              ],
+            ),
+            child: Stack(
+              children: [
+                GestureDetector(
+                  onScaleStart: (details) {
+                    if (!_isPointInCanvas(details.localFocalPoint)) {
+                      currentLine = null;
+                      return;
+                    }
+
+                    setState(() {
+                      isDrawingActive = true;
+                      if (!isDrawingMode) {
+                        previousZoom = zoom;
+                        previousOffset = offset;
+                        currentLine = null;
+                      } else {
+                        final normalizedPoint =
+                            _getNormalizedPoint(details.localFocalPoint);
+                        currentLine = DrawingLine(
+                          points: [normalizedPoint],
+                          color: isErasing ? Colors.white : Colors.black,
+                          strokeWidth: isErasing ? eraserWidth : strokeWidth,
+                          isEraser: isErasing,
+                        );
+                      }
+                    });
+                  },
+                  onScaleUpdate: (details) {
+                    if (!_isPointInCanvas(details.localFocalPoint)) {
+                      setState(() {
+                        if (isErasing) currentLine = null;
+                      });
+                      return;
+                    }
+
+                    setState(() {
+                      if (!isDrawingMode) {
+                        zoom = (previousZoom * details.scale).clamp(0.5, 5.0);
+                        final newOffset =
+                            previousOffset + details.focalPointDelta;
+                        offset = _constrainOffset(newOffset, zoom);
+                      } else if (currentLine != null) {
+                        final normalizedPoint =
+                            _getNormalizedPoint(details.localFocalPoint);
+                        currentLine!.points.add(normalizedPoint);
+
+                        if (isErasing) {
+                          _handleErasure(normalizedPoint);
+                        }
+                      }
+                    });
+                  },
+                  onScaleEnd: (details) {
+                    setState(() {
+                      isDrawingActive = false;
+                      if (isDrawingMode && currentLine != null && !isErasing) {
+                        lines.add(currentLine!);
+                      }
+                      currentLine = null;
+                    });
+                  },
+                  child: CustomPaint(
+                    key: canvasKey,
+                    painter: DrawingPainter(
+                      lines: lines,
+                      currentLine: currentLine,
+                      zoom: zoom,
+                      offset: offset,
+                      eraserRadius:
+                          isErasing && isDrawingActive ? eraserWidth / 2 : 0,
+                      canvasSize: Size(canvasWidth, canvasHeight),
+                    ),
+                    size: Size(canvasWidth, canvasHeight),
+                  ),
+                ),
+                if (isErasing)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 20,
+                    child: Slider(
+                      value: eraserWidth,
+                      min: 10,
+                      max: 50,
+                      onChanged: (value) {
+                        setState(() {
+                          eraserWidth = value;
+                        });
+                      },
+                      label: 'Eraser Size',
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          setState(() {
+            lines.clear();
+            currentLine = null;
+          });
+        },
+        child: Icon(Icons.clear),
+        tooltip: 'Clear Canvas',
+      ),
     );
   }
 
-  // Toggle between drawing mode and pan (hand) mode
-  void _toggleDrawingMode() {
+  @override
+  void didUpdateWidget(ZoomableDrawingCanvas oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (currentLine?.isEraser != isErasing) {
+      setState(() {
+        currentLine = null;
+      });
+    }
+  }
+
+  bool _isPointInCanvas(Offset point) {
+    return point.dx >= 0 &&
+        point.dx <= canvasWidth &&
+        point.dy >= 0 &&
+        point.dy <= canvasHeight;
+  }
+
+  Offset _constrainOffset(Offset newOffset, double currentZoom) {
+    final double maxDx = canvasWidth * (currentZoom - 1);
+    final double maxDy = canvasHeight * (currentZoom - 1);
+
+    return Offset(
+      newOffset.dx.clamp(-maxDx, maxDx),
+      newOffset.dy.clamp(-maxDy, maxDy),
+    );
+  }
+
+  Offset _getNormalizedPoint(Offset screenPoint) {
+    return (screenPoint - offset) / zoom;
+  }
+
+  void _handleErasure(Offset eraserPoint) {
+    final eraseRadius = eraserWidth / 2;
+    List<DrawingLine> newLines = [];
+
+    for (var line in lines) {
+      List<List<Offset>> segments = [[]];
+
+      for (int i = 0; i < line.points.length; i++) {
+        var point = line.points[i];
+        bool pointIsErased = false;
+
+        // Check if current point is within eraser radius
+        if ((point - eraserPoint).distance <= eraseRadius) {
+          pointIsErased = true;
+        } else if (i > 0) {
+          // Check if line segment intersects with eraser circle
+          var prevPoint = line.points[i - 1];
+          pointIsErased =
+              _lineIntersectsCircle(prevPoint, point, eraserPoint, eraseRadius);
+        }
+
+        if (!pointIsErased) {
+          segments.last.add(point);
+        } else if (segments.last.isNotEmpty) {
+          // Start new segment if current point is erased
+          segments.add([]);
+        }
+      }
+
+      // Add valid segments to new lines
+      for (var segment in segments) {
+        if (segment.length >= 2) {
+          newLines.add(DrawingLine(
+            points: segment,
+            color: line.color,
+            strokeWidth: line.strokeWidth,
+          ));
+        }
+      }
+    }
+
     setState(() {
-      isHandMode = !isHandMode;
+      lines = newLines;
     });
   }
 
-  Future<void> _pickPdfFile() async {
-    try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['pdf'],
-      );
+  // Helper method to check if a line segment intersects with a circle
+  bool _lineIntersectsCircle(
+      Offset lineStart, Offset lineEnd, Offset circleCenter, double radius) {
+    // Vector from line start to circle center
+    final ac = circleCenter - lineStart;
+    // Vector from line start to line end
+    final ab = lineEnd - lineStart;
 
-      if (result != null) {
-        String? filePath = result.files.single.path;
+    // Length of line segment
+    final abLength = ab.distance;
 
-        if (filePath != null) {
-          setState(() {
-            _selectedPdfPath = filePath;
-            _pdfImages = [];
-            _totalPages = 0;
-            _drawings = [];
-          });
+    // Unit vector of AB
+    final abUnit = Offset(ab.dx / abLength, ab.dy / abLength);
 
-          _loadAndRasterizePdf(filePath);
-        }
-      }
-    } catch (e) {
-      print('Error picking file: $e');
-    }
-  }
+    // Project AC onto AB to find the closest point
+    final projection = ac.dx * abUnit.dx + ac.dy * abUnit.dy;
 
-  Future<void> _loadAndRasterizePdf(String filePath) async {
-    try {
-      final file = File(filePath);
-      final documentBytes = await file.readAsBytes();
-
-      final pages = Printing.raster(documentBytes, dpi: 300);
-
-      int pageCount = 0;
-      final List<ui.Image> images = [];
-      await for (var page in pages) {
-        final image = await page.toImage();
-        images.add(image);
-        _drawings.add([]); // Initialize an empty list for each page's drawings
-        pageCount++;
-      }
-
-      setState(() {
-        _pdfImages = images;
-        _totalPages = pageCount;
-      });
-    } catch (e) {
-      print('Error loading or rasterizing PDF: $e');
-    }
-  }
-
-  // Convert ui.Image to PNG bytes
-  Future<Uint8List> _convertUiImageToBytes(ui.Image image) async {
-    final ByteData? byteData =
-        await image.toByteData(format: ui.ImageByteFormat.png);
-    return byteData!.buffer.asUint8List();
-  }
-
-  Future<void> _savePdf() async {
-    try {
-      final pdfDocument = pw.Document();
-
-      for (int i = 0; i < _totalPages; i++) {
-        final imageBytes = await _convertUiImageToBytes(_pdfImages[i]);
-
-        // Create a PdfImage from the byte data
-        final pdfImage = PdfImage(
-          pdfDocument.document,
-          image: imageBytes,
-          width: _pdfImages[i].width,
-          height: _pdfImages[i].height,
-        );
-
-        // Add the image to the PDF page
-        final page = pw.Page(
-          build: (pw.Context context) {
-            return pw.Image(pdfImage);
-          },
-        );
-        pdfDocument.addPage(page);
-      }
-
-      final outputFile = File('${_selectedPdfPath}_modified.pdf');
-      await outputFile.writeAsBytes(await pdfDocument.save());
-
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('PDF saved successfully!'),
-      ));
-    } catch (e) {
-      print('Error saving PDF: $e');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('Failed to save PDF.'),
-      ));
-    }
-  }
-}
-
-class PdfPagePainter extends CustomPainter {
-  final ui.Image pdfImage;
-  final double scale;
-  final Offset offset;
-
-  PdfPagePainter(this.pdfImage, this.scale, this.offset);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.save();
-    canvas.translate(offset.dx, offset.dy);
-    canvas.scale(scale);
-
-    final imageAspectRatio = pdfImage.width / pdfImage.height;
-    final canvasAspectRatio = size.width / size.height;
-
-    Rect imageRect;
-    if (imageAspectRatio > canvasAspectRatio) {
-      final scaledHeight = size.width / imageAspectRatio;
-      imageRect = Rect.fromLTWH(
-        0,
-        (size.height - scaledHeight) / 2,
-        size.width,
-        scaledHeight,
-      );
+    // Closest point on line segment
+    Offset closest;
+    if (projection <= 0) {
+      closest = lineStart;
+    } else if (projection >= abLength) {
+      closest = lineEnd;
     } else {
-      final scaledWidth = size.height * imageAspectRatio;
-      imageRect = Rect.fromLTWH(
-        (size.width - scaledWidth) / 2,
-        0,
-        scaledWidth,
-        size.height,
-      );
+      closest = lineStart + (abUnit * projection);
     }
 
-    final imageRectSource = Rect.fromLTWH(
-      0,
-      0,
-      pdfImage.width.toDouble(),
-      pdfImage.height.toDouble(),
+    // Check if closest point is within radius
+    return (closest - circleCenter).distance <= radius;
+  }
+
+  Future<void> _exportToPdf() async {
+    final pdf = pw.Document();
+
+    pdf.addPage(
+      pw.Page(
+        build: (pw.Context context) {
+          return pw.CustomPaint(
+            painter: (canvas, size) {
+              for (var line in lines) {
+                if (line.points.length >= 2) {
+                  for (int i = 0; i < line.points.length - 1; i++) {
+                    final start = line.points[i];
+                    final end = line.points[i + 1];
+
+                    canvas
+                      ..setStrokeColor(PdfColor.fromInt(line.color.value))
+                      ..setLineWidth(line.strokeWidth)
+                      ..moveTo(start.dx, start.dy)
+                      ..lineTo(end.dx, end.dy)
+                      ..strokePath();
+                  }
+                }
+              }
+            },
+            size: PdfPoint(canvasWidth, canvasHeight),
+          );
+        },
+        pageFormat: PdfPageFormat(canvasWidth, canvasHeight, marginAll: 0),
+      ),
     );
 
-    final paint = Paint();
-    canvas.drawImageRect(pdfImage, imageRectSource, imageRect, paint);
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final String filePath =
+          '${dir.path}/drawing_${DateTime.now().millisecondsSinceEpoch}.pdf';
 
-    canvas.restore();
-  }
+      final file = File(filePath);
+      await file.writeAsBytes(await pdf.save());
 
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('PDF saved successfully'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+
+      await OpenFile.open(filePath);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error saving PDF: ${e.toString()}'),
+          duration: Duration(seconds: 3),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 }
 
 class DrawingPainter extends CustomPainter {
-  final List<Offset?> points;
-  final double scale;
+  final List<DrawingLine> lines;
+  final DrawingLine? currentLine;
+  final double zoom;
   final Offset offset;
+  final double eraserRadius;
+  final Size canvasSize;
 
-  DrawingPainter(this.points, this.scale, this.offset);
+  DrawingPainter({
+    required this.lines,
+    this.currentLine,
+    required this.zoom,
+    required this.offset,
+    required this.canvasSize,
+    this.eraserRadius = 0,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.red
-      ..strokeWidth = 2.0
-      ..strokeCap = StrokeCap.round;
+    canvas.drawRect(
+      Offset.zero & canvasSize,
+      Paint()..color = Colors.white,
+    );
 
     canvas.save();
     canvas.translate(offset.dx, offset.dy);
-    canvas.scale(scale);
+    canvas.scale(zoom);
 
-    for (int i = 0; i < points.length - 1; i++) {
-      if (points[i] != null && points[i + 1] != null) {
-        canvas.drawLine(points[i]!, points[i + 1]!, paint);
+    canvas.clipRect(Offset.zero & canvasSize);
+
+    for (var line in lines) {
+      _drawLine(canvas, line);
+    }
+
+    if (currentLine != null) {
+      _drawLine(canvas, currentLine!);
+
+      if (currentLine!.isEraser &&
+          eraserRadius > 0 &&
+          currentLine!.points.isNotEmpty) {
+        final paint = Paint()
+          ..color = Colors.red.withOpacity(0.3)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.0;
+
+        canvas.drawCircle(
+          currentLine!.points.last,
+          eraserRadius / zoom,
+          paint,
+        );
       }
     }
 
     canvas.restore();
   }
 
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) {
-    return true;
-  }
-}
+  void _drawLine(Canvas canvas, DrawingLine line) {
+    if (line.points.isEmpty) return;
 
-void main() {
-  runApp(MaterialApp(
-    home: PdfPageViewCanvas(),
-  ));
+    final paint = Paint()
+      ..color = line.color
+      ..strokeWidth = line.strokeWidth
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
+
+    final path = Path();
+    path.moveTo(line.points.first.dx, line.points.first.dy);
+    for (var point in line.points.skip(1)) {
+      path.lineTo(point.dx, point.dy);
+    }
+
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(DrawingPainter oldDelegate) => true;
 }
