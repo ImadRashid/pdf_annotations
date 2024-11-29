@@ -1,8 +1,4 @@
 PODS:
-  - dart_ui_isolate (0.0.1):
-    - Flutter
-  - device_info_plus (0.0.1):
-    - Flutter
   - DKImagePickerController/Core (4.3.9):
     - DKImagePickerController/ImageDataManager
     - DKImagePickerController/Resource
@@ -38,15 +34,13 @@ PODS:
     - DKImagePickerController/PhotoGallery
     - Flutter
   - Flutter (1.0.0)
-  - flutter_pdfview (1.0.2):
-    - Flutter
-  - image_gallery_saver (2.0.2):
-    - Flutter
   - open_file_ios (0.0.1):
     - Flutter
   - path_provider_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
+  - pdf_render (0.0.1):
+    - Flutter
   - permission_handler_apple (9.1.1):
     - Flutter
   - printing (1.0.0):
@@ -55,24 +49,15 @@ PODS:
     - SDWebImage/Core (= 5.20.0)
   - SDWebImage/Core (5.20.0)
   - SwiftyGif (5.4.5)
-  - syncfusion_flutter_pdfviewer (0.0.1):
-    - Flutter
-  - url_launcher_ios (0.0.1):
-    - Flutter
 
 DEPENDENCIES:
-  - dart_ui_isolate (from `.symlinks/plugins/dart_ui_isolate/ios`)
-  - device_info_plus (from `.symlinks/plugins/device_info_plus/ios`)
   - file_picker (from `.symlinks/plugins/file_picker/ios`)
   - Flutter (from `Flutter`)
-  - flutter_pdfview (from `.symlinks/plugins/flutter_pdfview/ios`)
-  - image_gallery_saver (from `.symlinks/plugins/image_gallery_saver/ios`)
   - open_file_ios (from `.symlinks/plugins/open_file_ios/ios`)
   - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
+  - pdf_render (from `.symlinks/plugins/pdf_render/ios`)
   - permission_handler_apple (from `.symlinks/plugins/permission_handler_apple/ios`)
   - printing (from `.symlinks/plugins/printing/ios`)
-  - syncfusion_flutter_pdfviewer (from `.symlinks/plugins/syncfusion_flutter_pdfviewer/ios`)
-  - url_launcher_ios (from `.symlinks/plugins/url_launcher_ios/ios`)
 
 SPEC REPOS:
   trunk:
@@ -82,48 +67,33 @@ SPEC REPOS:
     - SwiftyGif
 
 EXTERNAL SOURCES:
-  dart_ui_isolate:
-    :path: ".symlinks/plugins/dart_ui_isolate/ios"
-  device_info_plus:
-    :path: ".symlinks/plugins/device_info_plus/ios"
   file_picker:
     :path: ".symlinks/plugins/file_picker/ios"
   Flutter:
     :path: Flutter
-  flutter_pdfview:
-    :path: ".symlinks/plugins/flutter_pdfview/ios"
-  image_gallery_saver:
-    :path: ".symlinks/plugins/image_gallery_saver/ios"
   open_file_ios:
     :path: ".symlinks/plugins/open_file_ios/ios"
   path_provider_foundation:
     :path: ".symlinks/plugins/path_provider_foundation/darwin"
+  pdf_render:
+    :path: ".symlinks/plugins/pdf_render/ios"
   permission_handler_apple:
     :path: ".symlinks/plugins/permission_handler_apple/ios"
   printing:
     :path: ".symlinks/plugins/printing/ios"
-  syncfusion_flutter_pdfviewer:
-    :path: ".symlinks/plugins/syncfusion_flutter_pdfviewer/ios"
-  url_launcher_ios:
-    :path: ".symlinks/plugins/url_launcher_ios/ios"
 
 SPEC CHECKSUMS:
-  dart_ui_isolate: d5bcda83ca4b04f129d70eb90110b7a567aece14
-  device_info_plus: 97af1d7e84681a90d0693e63169a5d50e0839a0d
   DKImagePickerController: 946cec48c7873164274ecc4624d19e3da4c1ef3c
   DKPhotoGallery: b3834fecb755ee09a593d7c9e389d8b5d6deed60
   file_picker: ce3938a0df3cc1ef404671531facef740d03f920
   Flutter: e0871f40cf51350855a761d2e70bf5af5b9b5de7
-  flutter_pdfview: 25f53dd6097661e6395b17de506e6060585946bd
-  image_gallery_saver: cb43cc43141711190510e92c460eb1655cd343cb
   open_file_ios: 461db5853723763573e140de3193656f91990d9e
   path_provider_foundation: 2b6b4c569c0fb62ec74538f866245ac84301af46
+  pdf_render: 0b4e1a615aab83ce88b26c57753049424908a755
   permission_handler_apple: e76247795d700c14ea09e3a2d8855d41ee80a2e6
   printing: 233e1b73bd1f4a05615548e9b5a324c98588640b
   SDWebImage: 73c6079366fea25fa4bb9640d5fb58f0893facd8
   SwiftyGif: 706c60cf65fa2bc5ee0313beece843c8eb8194d4
-  syncfusion_flutter_pdfviewer: bb9998884b864cfedf72628df3503bdf57e397c0
-  url_launcher_ios: 5334b05cef931de560670eeae103fd3e431ac3fe
 
 PODFILE CHECKSUM: 819463e6a0290f5a72f145ba7cde16e8b6ef0796
 
