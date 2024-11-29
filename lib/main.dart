@@ -53,7 +53,6 @@ class ZoomableDrawingCanvas extends StatefulWidget {
 }
 
 class _ZoomableDrawingCanvasState extends State<ZoomableDrawingCanvas> {
-  // Add these properties
   Size? pdfPageSize;
   double? aspectRatio;
   double maxWidth = 1000.0; // Maximum width constraint for very large PDFs
