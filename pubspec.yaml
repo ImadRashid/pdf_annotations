@@ -36,15 +36,17 @@ dependencies:
   font_awesome_flutter: ^10.8.0
   path_provider: ^2.0.11
   pdf: ^3.10.0
-  permission_handler: ^10.2.0
+  #permission_handler: ^10.2.0
   syncfusion_flutter_pdf: ^27.2.3
   syncfusion_flutter_pdfviewer: ^27.2.3
   open_file:
   vector_math:
   image: ^4.3.0
-  screenshot: ^3.0.0
+  #screenshot: ^3.0.0
   printing: ^5.13.4
   zoom_widget: ^2.0.1
+  image_editor_plus: 1.0.6
+  pro_image_editor: ^6.1.6
   #pdf_image_renderer: ^0.7.0
   
 

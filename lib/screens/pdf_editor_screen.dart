@@ -87,7 +87,6 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
 
   @override
   Widget build(BuildContext context) {
-    log("current page ===> ${_pdfViewerController.pageNumber}");
     return Scaffold(
       appBar: AppBar(
         title: Text("Edit PDF ${zoomLevel}"),

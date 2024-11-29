@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "com.example.pdf_annotations"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 35
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
