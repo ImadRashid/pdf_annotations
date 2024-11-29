@@ -131,7 +131,6 @@ class _ZoomableDrawingCanvasState extends State<ZoomableDrawingCanvas> {
     double containerWidth = pdfPageSize?.width ?? canvasWidth;
     double containerHeight = pdfPageSize?.height ?? canvasHeight;
 
-    // Scale container if needed
     if (containerWidth > maxWidth) {
       containerHeight = maxWidth / aspectRatio!;
       containerWidth = maxWidth;
