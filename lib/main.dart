@@ -67,7 +67,7 @@ class _ZoomableDrawingCanvasState extends State<ZoomableDrawingCanvas> {
   Offset previousOffset = Offset.zero;
 
   static const double canvasWidth = 600;
-  static const double canvasHeight = 800;
+  static const double canvasHeight = 500;
   final GlobalKey canvasKey = GlobalKey();
 
   @override
@@ -173,10 +173,35 @@ class _ZoomableDrawingCanvasState extends State<ZoomableDrawingCanvas> {
 
                     setState(() {
                       if (!isDrawingMode) {
-                        zoom = (previousZoom * details.scale).clamp(0.5, 5.0);
-                        final newOffset =
-                            previousOffset + details.focalPointDelta;
-                        offset = _constrainOffset(newOffset, zoom);
+                        // Calculate new zoom
+                        final newZoom =
+                            (previousZoom * details.scale).clamp(0.5, 5.0);
+
+                        if (details.scale == 1.0) {
+                          // Enhanced pan operation with higher speed and direct delta application
+                          final panSpeed = 3.0; // Increased from 2.0 to 3.0
+                          final rawOffset = previousOffset +
+                              (details.focalPointDelta * panSpeed);
+
+                          // Update the offset immediately without waiting for previous animation
+                          offset = _constrainOffset(rawOffset, zoom);
+
+                          // Update previousOffset to current position to prevent jump on next update
+                          previousOffset = offset;
+                        } else {
+                          // Zoom operation
+                          final focalPoint = details.localFocalPoint;
+                          final oldScale = zoom;
+                          final newScale = newZoom;
+
+                          // Calculate new offset with enhanced focal point maintenance
+                          final newOffset = focalPoint -
+                              (focalPoint - previousOffset) *
+                                  (newScale / oldScale);
+
+                          offset = _constrainOffset(newOffset, newScale);
+                          zoom = newScale;
+                        }
                       } else if (currentLine != null) {
                         final normalizedPoint =
                             _getNormalizedPoint(details.localFocalPoint);
@@ -360,25 +385,30 @@ class _ZoomableDrawingCanvasState extends State<ZoomableDrawingCanvas> {
     pdf.addPage(
       pw.Page(
         build: (pw.Context context) {
-          return pw.CustomPaint(
-            painter: (canvas, size) {
-              for (var line in lines) {
-                if (line.points.length >= 2) {
-                  for (int i = 0; i < line.points.length - 1; i++) {
-                    final start = line.points[i];
-                    final end = line.points[i + 1];
+          return pw.Transform(
+            transform: Matrix4.identity()
+              ..translate(0.0, canvasHeight) // Move to bottom-left corner
+              ..scale(1.0, -1.0), // Flip vertically
+            child: pw.CustomPaint(
+              painter: (canvas, size) {
+                for (var line in lines) {
+                  if (line.points.length >= 2) {
+                    for (int i = 0; i < line.points.length - 1; i++) {
+                      final start = line.points[i];
+                      final end = line.points[i + 1];
 
-                    canvas
-                      ..setStrokeColor(PdfColor.fromInt(line.color.value))
-                      ..setLineWidth(line.strokeWidth)
-                      ..moveTo(start.dx, start.dy)
-                      ..lineTo(end.dx, end.dy)
-                      ..strokePath();
+                      canvas
+                        ..setStrokeColor(PdfColor.fromInt(line.color.value))
+                        ..setLineWidth(line.strokeWidth)
+                        ..moveTo(start.dx, start.dy)
+                        ..lineTo(end.dx, end.dy)
+                        ..strokePath();
+                    }
                   }
                 }
-              }
-            },
-            size: PdfPoint(canvasWidth, canvasHeight),
+              },
+              size: PdfPoint(canvasWidth, canvasHeight),
+            ),
           );
         },
         pageFormat: PdfPageFormat(canvasWidth, canvasHeight, marginAll: 0),
@@ -432,38 +462,70 @@ class DrawingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // Fill background with white instead of red
     canvas.drawRect(
       Offset.zero & canvasSize,
       Paint()..color = Colors.white,
     );
 
+    // Optimize transform operations
     canvas.save();
     canvas.translate(offset.dx, offset.dy);
     canvas.scale(zoom);
 
-    canvas.clipRect(Offset.zero & canvasSize);
+    // Optimize clipping
+    final clipRect = Offset.zero & canvasSize;
+    canvas.clipRect(clipRect);
+
+    // Batch similar lines together to reduce state changes
+    final regularPaint = Paint()
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
 
     for (var line in lines) {
-      _drawLine(canvas, line);
+      if (line.points.length >= 2) {
+        regularPaint
+          ..color = line.color
+          ..strokeWidth = line.strokeWidth;
+
+        final path = Path();
+        path.moveTo(line.points.first.dx, line.points.first.dy);
+        for (var point in line.points.skip(1)) {
+          path.lineTo(point.dx, point.dy);
+        }
+        canvas.drawPath(path, regularPaint);
+      }
     }
 
-    if (currentLine != null) {
-      _drawLine(canvas, currentLine!);
+    // Draw current line if exists
+    if (currentLine != null && currentLine!.points.length >= 2) {
+      regularPaint
+        ..color = currentLine!.color
+        ..strokeWidth = currentLine!.strokeWidth;
 
-      if (currentLine!.isEraser &&
-          eraserRadius > 0 &&
-          currentLine!.points.isNotEmpty) {
-        final paint = Paint()
-          ..color = Colors.red.withOpacity(0.3)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2.0;
-
-        canvas.drawCircle(
-          currentLine!.points.last,
-          eraserRadius / zoom,
-          paint,
-        );
+      final path = Path();
+      path.moveTo(currentLine!.points.first.dx, currentLine!.points.first.dy);
+      for (var point in currentLine!.points.skip(1)) {
+        path.lineTo(point.dx, point.dy);
       }
+      canvas.drawPath(path, regularPaint);
+    }
+
+    // Draw eraser preview if needed
+    if (currentLine?.isEraser == true &&
+        eraserRadius > 0 &&
+        currentLine!.points.isNotEmpty) {
+      final eraserPaint = Paint()
+        ..color = Colors.red.withOpacity(0.3)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.0;
+
+      canvas.drawCircle(
+        currentLine!.points.last,
+        eraserRadius / zoom,
+        eraserPaint,
+      );
     }
 
     canvas.restore();

@@ -40,10 +40,7 @@ dependencies:
   syncfusion_flutter_pdf: ^27.2.3
   syncfusion_flutter_pdfviewer: ^27.2.3
   open_file:
-  vector_math:
   printing:
-  dart_ui_isolate:
-  image_gallery_saver:
 
 
 dev_dependencies:
