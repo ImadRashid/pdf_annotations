@@ -1,8 +1,8 @@
 import 'dart:typed_data';
 import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
@@ -16,8 +16,12 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
   List<ui.Image> _pdfImages = [];
   int _totalPages = 0;
   String? _selectedPdfPath;
-  List<List<Offset?>> _drawings = []; // Store drawing points for each page
+  List<List<Offset?>> _drawings = [];
   int _currentPage = 0;
+  bool isHandMode = false;
+  double _scale = 1.0;
+  Offset _offset = Offset(0, 0);
+  late Offset _lastFocalPoint;
 
   @override
   Widget build(BuildContext context) {
@@ -29,37 +33,62 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
             icon: Icon(Icons.folder_open),
             onPressed: _pickPdfFile,
           ),
+          IconButton(
+            icon: Icon(isHandMode ? Icons.pan_tool : Icons.brush),
+            onPressed: _toggleDrawingMode,
+          ),
         ],
       ),
       body: _selectedPdfPath == null
-          ? Center(
-              child: Text('Please select a PDF file to display'),
-            )
+          ? Center(child: Text('Please select a PDF file to display'))
           : _pdfImages.isEmpty
               ? Center(child: CircularProgressIndicator())
               : Column(
                   children: [
                     Expanded(
                       child: GestureDetector(
+                        onScaleStart: (details) {
+                          _lastFocalPoint = details.localFocalPoint;
+                        },
                         onScaleUpdate: (details) {
-                          setState(() {
-                            final localPosition = details.localFocalPoint;
-                            _drawings[_currentPage].add(localPosition);
-                          });
+                          if (isHandMode) {
+                            setState(() {
+                              _offset = _offset +
+                                  details.localFocalPoint -
+                                  _lastFocalPoint;
+                              _lastFocalPoint = details.localFocalPoint;
+                            });
+                          } else {
+                            setState(() {
+                              _scale = (_scale * details.scale).clamp(1.0, 3.0);
+                            });
+                          }
                         },
-                        onScaleEnd: (_) {
-                          setState(() {
-                            _drawings[_currentPage].add(null);
-                          });
-                        },
+                        onPanUpdate: isHandMode
+                            ? (details) {
+                                setState(() {
+                                  _offset +=
+                                      details.localPosition - _lastFocalPoint;
+                                });
+                                _lastFocalPoint = details.localPosition;
+                              }
+                            : null,
                         child: Stack(
                           children: [
                             CustomPaint(
-                              painter: PdfPagePainter(_pdfImages[_currentPage]),
+                              painter: PdfPagePainter(
+                                _pdfImages[_currentPage],
+                                _scale,
+                                _offset,
+                              ),
                               child: Container(),
                             ),
                             CustomPaint(
-                              painter: DrawingPainter(_drawings[_currentPage]),
+                              painter: DrawingPainter(
+                                _drawings[_currentPage],
+                                _scale,
+                                _offset,
+                              ),
                             ),
                           ],
                         ),
@@ -99,6 +128,13 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
     );
   }
 
+  // Toggle between drawing mode and pan (hand) mode
+  void _toggleDrawingMode() {
+    setState(() {
+      isHandMode = !isHandMode;
+    });
+  }
+
   Future<void> _pickPdfFile() async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -127,19 +163,9 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
 
   Future<void> _loadAndRasterizePdf(String filePath) async {
     try {
-      // Load the PDF file
       final file = File(filePath);
       final documentBytes = await file.readAsBytes();
 
-      // Determine optimal DPI based on screen dimensions
-      final screenSize = MediaQuery.of(context).size;
-      final targetWidth =
-          screenSize.width * MediaQuery.of(context).devicePixelRatio;
-      const baseDpi = 72; // Default DPI for PDF
-      final dpi = (targetWidth / baseDpi)
-          .clamp(150, 500); // Limit DPI between 150 and 300
-
-      // Use Printing to rasterize the PDF with optimal DPI
       final pages = Printing.raster(documentBytes, dpi: 300);
 
       int pageCount = 0;
@@ -160,55 +186,81 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
     }
   }
 
-  Future<void> _loadPage(int pageIndex) async {
+  // Convert ui.Image to PNG bytes
+  Future<Uint8List> _convertUiImageToBytes(ui.Image image) async {
+    final ByteData? byteData =
+        await image.toByteData(format: ui.ImageByteFormat.png);
+    return byteData!.buffer.asUint8List();
+  }
+
+  Future<void> _savePdf() async {
     try {
-      final file = File(_selectedPdfPath!);
-      final documentBytes = await file.readAsBytes();
+      final pdfDocument = pw.Document();
 
-      final dpi = 300; // Fixed DPI or dynamically calculated
-      final page = await Printing.raster(documentBytes,
-          dpi: dpi.toDouble(), pages: [pageIndex]).first;
-      final image = await page.toImage();
+      for (int i = 0; i < _totalPages; i++) {
+        final imageBytes = await _convertUiImageToBytes(_pdfImages[i]);
 
-      setState(() {
-        if (_pdfImages.length <= pageIndex) {
-          _pdfImages.add(image);
-        } else {
-          _pdfImages[pageIndex] = image;
-        }
-      });
+        // Create a PdfImage from the byte data
+        final pdfImage = PdfImage(
+          pdfDocument.document,
+          image: imageBytes,
+          width: _pdfImages[i].width,
+          height: _pdfImages[i].height,
+        );
+
+        // Add the image to the PDF page
+        final page = pw.Page(
+          build: (pw.Context context) {
+            return pw.Image(pdfImage);
+          },
+        );
+        pdfDocument.addPage(page);
+      }
+
+      final outputFile = File('${_selectedPdfPath}_modified.pdf');
+      await outputFile.writeAsBytes(await pdfDocument.save());
+
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('PDF saved successfully!'),
+      ));
     } catch (e) {
-      print('Error loading page: $e');
+      print('Error saving PDF: $e');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Failed to save PDF.'),
+      ));
     }
   }
 }
 
 class PdfPagePainter extends CustomPainter {
   final ui.Image pdfImage;
+  final double scale;
+  final Offset offset;
 
-  PdfPagePainter(this.pdfImage);
+  PdfPagePainter(this.pdfImage, this.scale, this.offset);
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Calculate the scaling factor while maintaining aspect ratio
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
+    canvas.scale(scale);
+
     final imageAspectRatio = pdfImage.width / pdfImage.height;
     final canvasAspectRatio = size.width / size.height;
 
     Rect imageRect;
     if (imageAspectRatio > canvasAspectRatio) {
-      // Image is wider than the canvas
       final scaledHeight = size.width / imageAspectRatio;
       imageRect = Rect.fromLTWH(
         0,
-        (size.height - scaledHeight) / 2, // Center vertically
+        (size.height - scaledHeight) / 2,
         size.width,
         scaledHeight,
       );
     } else {
-      // Image is taller than the canvas
       final scaledWidth = size.height * imageAspectRatio;
       imageRect = Rect.fromLTWH(
-        (size.width - scaledWidth) / 2, // Center horizontally
+        (size.width - scaledWidth) / 2,
         0,
         scaledWidth,
         size.height,
@@ -222,9 +274,10 @@ class PdfPagePainter extends CustomPainter {
       pdfImage.height.toDouble(),
     );
 
-    // Draw the scaled PDF image
     final paint = Paint();
     canvas.drawImageRect(pdfImage, imageRectSource, imageRect, paint);
+
+    canvas.restore();
   }
 
   @override
@@ -235,8 +288,10 @@ class PdfPagePainter extends CustomPainter {
 
 class DrawingPainter extends CustomPainter {
   final List<Offset?> points;
+  final double scale;
+  final Offset offset;
 
-  DrawingPainter(this.points);
+  DrawingPainter(this.points, this.scale, this.offset);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -245,11 +300,17 @@ class DrawingPainter extends CustomPainter {
       ..strokeWidth = 2.0
       ..strokeCap = StrokeCap.round;
 
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
+    canvas.scale(scale);
+
     for (int i = 0; i < points.length - 1; i++) {
       if (points[i] != null && points[i + 1] != null) {
         canvas.drawLine(points[i]!, points[i + 1]!, paint);
       }
     }
+
+    canvas.restore();
   }
 
   @override
