@@ -394,7 +394,7 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
                                                   _getAbsoluteShapes(shapes),
                                               currentShape: _getAbsoluteShape(
                                                   currentShape),
-                                              panOffset: _currentPanOffset,
+                                              //    panOffset: _currentPanOffset,
                                             ),
                                           ),
                                         ),
@@ -988,45 +988,45 @@ class _PdfEditorScreenState extends State<PdfEditorScreen> {
     });
   }
 
-  void _eraseLine(Offset position) {
-    setState(() {
-      // Remove lines
-      lines.removeWhere((line) {
-        final isErased =
-            line.points.any((point) => (point - position).distance < 10);
-        if (isErased) pageLines[currentPage]?.remove(line);
-        return isErased;
-      });
+  void _eraseLine(Offset point) {
+    final absolutePoint = _getAbsoluteOffset(point);
+    if (mode == Mode.erase) {
+      setState(() {
+        // Erase drawn lines
+        lines.removeWhere((line) {
+          return line.points.any((p) =>
+              (p.dx - absolutePoint.dx).abs() < 15 &&
+              (p.dy - absolutePoint.dy).abs() < 15);
+        });
 
-      // Remove highlights
-      highlights.removeWhere((highlight) {
-        final isErased =
-            highlight.points.any((point) => (point - position).distance < 10);
-        if (isErased) pageHighlights[currentPage]?.remove(highlight);
-        return isErased;
-      });
+        // Erase highlights
+        highlights.removeWhere((line) {
+          return line.points.any((p) =>
+              (p.dx - absolutePoint.dx).abs() < 15 &&
+              (p.dy - absolutePoint.dy).abs() < 15);
+        });
 
-      // Remove shapes
-      shapes.removeWhere((shape) {
-        final isErased = (shape.start - position).distance < 10 ||
-            (shape.end - position).distance < 10;
-        if (isErased) pageShapes[currentPage]?.remove(shape);
-        return isErased;
-      });
+        // Erase text annotations
+        texts.removeWhere((text) {
+          final textBounds = Rect.fromLTWH(
+            text.position.dx,
+            text.position.dy,
+            text.style.fontSize! * text.text.length * 0.6, // Approximation
+            text.style.fontSize!,
+          );
+          return textBounds.contains(absolutePoint);
+        });
 
-      // Remove text annotations
-      texts.removeWhere((text) {
-        final rect = Rect.fromLTWH(
-          text.position.dx,
-          text.position.dy,
-          text.style.fontSize! * text.text.length * 0.6,
-          text.style.fontSize!,
-        );
-        final isErased = rect.contains(position);
-        if (isErased) pageTexts[currentPage]?.remove(text);
-        return isErased;
+        // Erase shapes
+        shapes.removeWhere((shape) {
+          final shapeBounds = Rect.fromPoints(
+            shape.start,
+            shape.end,
+          );
+          return shapeBounds.contains(absolutePoint);
+        });
       });
-    });
+    }
   }
 
   Future<void> _saveModifiedPDF() async {

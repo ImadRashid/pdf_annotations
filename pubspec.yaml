@@ -47,8 +47,8 @@ dependencies:
   zoom_widget: ^2.0.1
   image_editor_plus: 1.0.6
   pro_image_editor: ^6.1.6
+  pdf_render: ^1.4.7
   #pdf_image_renderer: ^0.7.0
-  
 
 
 dev_dependencies:

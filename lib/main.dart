@@ -249,24 +249,22 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:open_file/open_file.dart';
-import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:image/image.dart' as img;
 import 'package:pdf_annotations/models/drawn_line.dart';
 import 'package:pdf_annotations/models/shape_annotation.dart';
 import 'package:pdf_annotations/models/text_annotation.dart';
 import 'package:pdf_annotations/screens/pdf_editor_screen.dart';
-import 'package:pdf_annotations/utils/pdf_utils.dart';
 import 'package:pdf_annotations/widgets/drawing_painter.dart';
-import 'package:printing/printing.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:screenshot/screenshot.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:vector_math/vector_math_64.dart' as math;
+import 'package:pdf_render/pdf_render.dart' as pr;
 
 // enum Mode {
 //   highlight,
@@ -289,47 +287,34 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
   TransformationController _transformationController =
       TransformationController();
   double _scale = 1.0;
-  double _previousScale = 1.0;
-
-  List<Uint8List> _screenshots = [];
   List<ui.Image> _pdfImages = [];
   int _totalPages = 0;
   String? _selectedPdfPath;
-  List<List<Offset?>> _drawings = [];
-  //int _currentPage = 0;
   Mode mode = Mode.pan;
   //double zoomLevel = 1.0;
   TextEditingController _pageController = TextEditingController(text: "1");
-  Offset _lastPanOffset = Offset.zero;
-  Offset _currentPanOffset = Offset.zero;
-  // Mode mode = Mode.pan;
-  List<GlobalKey> _repaintBoundaryKeys = [];
-  // final PdfViewerController _pdfViewerController = PdfViewerController();
-  Map<int, List<DrawnLine>> pageLines = {}; // Annotations per page
+  Map<int, List<DrawnLine>> pageLines = {};
   Map<int, List<DrawnLine>> pageHighlights = {};
-  int currentPage = 1; // Track the current page
-  int totalPages = 0; // Total pages in the PDF
+  int currentPage = 1;
+  int totalPages = 0;
   List<DrawnLine> lines = [];
   List<DrawnLine> highlights = [];
   Offset? currentPoint;
-  Map<int, List<ShapeAnnotation>> pageShapes = {}; // Shapes per page
-  List<ShapeAnnotation> shapes = []; // Current page's shapes
-  ShapeAnnotation? currentShape; // Current shape being drawn
+  Map<int, List<ShapeAnnotation>> pageShapes = {};
+  List<ShapeAnnotation> shapes = [];
+  ShapeAnnotation? currentShape;
 
-  double pointerSize = 3.0; // Default pointer size
-  Color pointerColor = Colors.black; // Default pointer color
+  double pointerSize = 3.0;
+  Color pointerColor = Colors.black;
   bool showOptions = true;
-  Map<int, List<TextAnnotation>> pageTexts = {}; // Text annotations per page
-  List<TextAnnotation> texts = []; // Current page's text annotations
+  Map<int, List<TextAnnotation>> pageTexts = {};
+  List<TextAnnotation> texts = [];
   ScreenshotController screenshotController = ScreenshotController();
-  // Page dimensions and zoom factor
-  Size? pageSize;
-  //double zoomLevel = 1.0;
+
   bool isZooming = false;
-  //TextEditingController _pageController = TextEditingController();
-  Set<int> modifiedPages = {}; // Tracks the indices of modified pages
-  Map<int, Uint8List> pageScreenshots =
-      {}; // Store screenshots of modified pages
+
+  Set<int> modifiedPages = {};
+  Map<int, Uint8List> pageScreenshots = {};
   @override
   void initState() {
     super.initState();
@@ -353,6 +338,31 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
     });
   }
 
+  void _resetZoom() {
+    _scale = 1.0;
+    _transformationController.value =
+        Matrix4.diagonal3(math.Vector3(_scale, _scale, 1.0));
+    setState(() {});
+  }
+
+  double maxWidth = 1000.0;
+
+  Offset _getNormalizedOffset(Offset localFocalPoint) {
+    // Normalize the local focal point based on current scale and pan offset
+    final matrix = _transformationController.value;
+
+    // Apply the inverse of the transformation matrix to convert the local coordinates
+    // final inverseMatrix = matrix.clone().invert();
+    final Matrix4 inverseMatrix =
+        Matrix4.tryInvert(_transformationController.value) ??
+            Matrix4.identity();
+    final transformedOffset =
+        MatrixUtils.transformPoint(inverseMatrix, localFocalPoint);
+
+    // Return the transformed position, adjusted for scale and pan
+    return transformedOffset;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -370,9 +380,7 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
         ],
       ),
       body: _isLoading
-          ? Center(
-              child: CircularProgressIndicator(),
-            )
+          ? Center(child: CircularProgressIndicator())
           : _selectedPdfPath == null
               ? Center(child: Text('Please select a PDF file to display'))
               : _pdfImages.isEmpty
@@ -380,212 +388,197 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
                   : Column(
                       children: [
                         Expanded(
-                          child: GestureDetector(
-                            onTapDown: (details) {
-                              print("heree");
-                              if (mode == Mode.text) {
-                                _selectTextAnnotation(details.localPosition);
-                              }
+                          child: Screenshot(
+                            controller: screenshotController,
+                            child: InteractiveViewer(
+                              transformationController:
+                                  _transformationController,
+                              onInteractionStart: (details) {
+                                setState(() {
+                                  isZooming = details.pointerCount > 1;
+                                });
 
-                              if (mode == Mode.text) {
-                                _addTextAnnotation(details.localPosition);
-                              }
-                            },
-                            child: Screenshot(
-                              controller: screenshotController,
-                              child: InteractiveViewer(
-                                transformationController:
-                                    _transformationController,
-                                onInteractionStart: (details) {
-                                  print("Scale start: ${details.pointerCount}");
-                                  // Check if this is a zoom or pan gesture
+                                if (!isZooming && mode != Mode.pan) {
+                                  final startPoint = _getNormalizedOffset(
+                                      details.localFocalPoint);
                                   setState(() {
-                                    isZooming = details.pointerCount > 1;
-                                    _previousScale = _scale;
-                                  });
-                                  if (!isZooming && mode == Mode.text) {
-                                    _selectTextAnnotation(
-                                        details.localFocalPoint);
-                                  }
-
-                                  // if (mode == Mode.pan) {
-                                  //   _lastPanOffset = details.localFocalPoint;
-                                  // }
-
-                                  if (!isZooming && mode != Mode.pan) {
-                                    final startPoint = _getNormalizedOffset(
-                                        details.localFocalPoint);
                                     if (mode == Mode.text) {
                                       _addTextAnnotation(
                                           details.localFocalPoint);
                                     } else if (mode == Mode.erase) {
-                                      setState(() {
-                                        _eraseLine(startPoint);
-                                      });
+                                      _eraseLine(startPoint);
                                     } else if ([
                                       Mode.line,
                                       Mode.rectangle,
                                       Mode.circle,
                                       Mode.arrow
                                     ].contains(mode)) {
-                                      // Initialize a new shape
-                                      setState(() {
-                                        currentShape = ShapeAnnotation(
-                                          start: startPoint,
-                                          end: startPoint,
-                                          shapeType: mode,
-                                          color: pointerColor,
-                                          strokeWidth: pointerSize / _scale,
-                                        );
-                                      });
+                                      currentShape = ShapeAnnotation(
+                                        start: startPoint,
+                                        end: startPoint,
+                                        shapeType: mode,
+                                        color: pointerColor,
+                                        strokeWidth: pointerSize / _scale,
+                                      );
                                     }
-                                  }
-                                },
-                                onInteractionUpdate: (details) {
-                                  _markPageAsModified();
-                                  // if (mode == Mode.pan) {
-                                  setState(() {
-                                    // _scale = _previousScale * details.scale;
-                                    // _transformationController.value =
-                                    //     Matrix4.diagonal3(
-                                    //         math.Vector3(_scale, _scale, 1.0));
-                                    // _currentPanOffset =
-                                    //     _lastPanOffset - details.localFocalPoint;
                                   });
-                                  //  }
-                                  if (isZooming) {
-                                    print("Zooming");
-                                    if ((details.scale - 1.0).abs() > 0.01) {
-                                      // Threshold for significant changes
-                                      setState(() {
-                                        _scale = (_scale * details.scale)
-                                            .clamp(1.0, 3.0);
-                                        // _pdfViewerController.zoomLevel = zoomLevel;
-                                      });
-                                    }
-                                  } else if (mode != Mode.pan) {
-                                    if (mode == Mode.text) {
-                                      setState(() {
-                                        for (var text in texts) {
-                                          if (text.isSelected) {
-                                            // Move selected text annotation
-                                            text.position +=
-                                                details.focalPointDelta /
-                                                    _scale;
-                                          }
-                                        }
-                                      });
-                                    }
-                                    print("Single finger action");
-                                    final offset = _getNormalizedOffset(
-                                        details.localFocalPoint);
-                                    setState(() {
-                                      if (mode == Mode.erase) {
-                                        _eraseLine(offset);
-                                      } else if (mode == Mode.highlight) {
-                                        if (highlights.isNotEmpty &&
-                                            highlights.last.isDrawing) {
-                                          highlights.last.points.add(offset);
-                                        } else {
-                                          final newHighlight = DrawnLine(
+                                }
+                              },
+                              onInteractionUpdate: (details) {
+                                _markPageAsModified();
+
+                                if (isZooming) {
+                                  setState(() {
+                                    _scale = (_scale * details.scale)
+                                        .clamp(1.0, 3.0);
+                                  });
+                                } else if (mode != Mode.pan) {
+                                  final offset = _getNormalizedOffset(
+                                      details.localFocalPoint);
+                                  setState(() {
+                                    if (mode == Mode.erase) {
+                                      _eraseLine(offset);
+                                    } else if (mode == Mode.highlight) {
+                                      if (highlights.isNotEmpty &&
+                                          highlights.last.isDrawing) {
+                                        highlights.last.points.add(offset);
+                                      } else {
+                                        final newHighlight = DrawnLine(
                                             [offset],
                                             Colors.yellow.withOpacity(0.3),
                                             15.0,
-                                            isDrawing: true,
-                                          );
-                                          highlights.add(newHighlight);
+                                            isDrawing: true);
+                                        highlights.add(newHighlight);
 
-                                          if (pageHighlights[currentPage] ==
-                                              null) {
-                                            pageHighlights[currentPage] = [];
-                                          }
-                                          pageHighlights[currentPage]!
-                                              .add(newHighlight);
+                                        if (pageHighlights[currentPage] ==
+                                            null) {
+                                          pageHighlights[currentPage] = [];
                                         }
-                                      } else if (mode == Mode.draw) {
-                                        if (lines.isNotEmpty &&
-                                            lines.last.isDrawing) {
-                                          lines.last.points.add(offset);
-                                        } else {
-                                          final newLine = DrawnLine(
-                                            [offset],
-                                            pointerColor,
-                                            pointerSize,
-                                            isDrawing: true,
-                                          );
-                                          lines.add(newLine);
-
-                                          if (pageLines[currentPage] == null) {
-                                            pageLines[currentPage] = [];
-                                          }
-                                          pageLines[currentPage]!.add(newLine);
-                                        }
-                                      } else if ([
-                                        Mode.line,
-                                        Mode.rectangle,
-                                        Mode.circle,
-                                        Mode.arrow
-                                      ].contains(mode)) {
-                                        if (currentShape != null) {
-                                          // Update the end point of the shape
-                                          currentShape = currentShape!
-                                              .copyWith(end: offset);
-                                        }
+                                        pageHighlights[currentPage]!
+                                            .add(newHighlight);
                                       }
-                                      currentPoint = offset;
-                                    });
-                                  }
-                                },
-                                onInteractionEnd: (details) {
-                                  print("Scale end");
-                                  setState(() {
-                                    isZooming = false;
+                                    } else if (mode == Mode.draw) {
+                                      if (lines.isNotEmpty &&
+                                          lines.last.isDrawing) {
+                                        lines.last.points.add(offset);
+                                      } else {
+                                        final newLine = DrawnLine(
+                                            [offset], pointerColor, pointerSize,
+                                            isDrawing: true);
+                                        lines.add(newLine);
+
+                                        if (pageLines[currentPage] == null) {
+                                          pageLines[currentPage] = [];
+                                        }
+                                        pageLines[currentPage]!.add(newLine);
+                                      }
+                                    } else if ([
+                                      Mode.line,
+                                      Mode.rectangle,
+                                      Mode.circle,
+                                      Mode.arrow
+                                    ].contains(mode)) {
+                                      if (currentShape != null) {
+                                        currentShape =
+                                            currentShape!.copyWith(end: offset);
+                                      }
+                                    }
+                                    currentPoint = offset;
                                   });
+                                }
+                              },
+                              onInteractionEnd: (details) {
+                                setState(() {
+                                  isZooming = false;
+                                });
 
-                                  if (mode != Mode.pan) {
-                                    setState(() {
-                                      if (mode == Mode.highlight &&
-                                          highlights.isNotEmpty) {
-                                        highlights.last.isDrawing = false;
-                                      } else if (mode == Mode.draw &&
-                                          lines.isNotEmpty) {
-                                        lines.last.isDrawing = false;
-                                      } else if ([
-                                        Mode.line,
-                                        Mode.rectangle,
-                                        Mode.circle,
-                                        Mode.arrow
-                                      ].contains(mode)) {
-                                        if (currentShape != null) {
-                                          shapes.add(currentShape!);
-                                          currentShape = null;
-                                        }
+                                if (mode != Mode.pan) {
+                                  setState(() {
+                                    if (mode == Mode.highlight &&
+                                        highlights.isNotEmpty) {
+                                      highlights.last.isDrawing = false;
+                                    } else if (mode == Mode.draw &&
+                                        lines.isNotEmpty) {
+                                      lines.last.isDrawing = false;
+                                    } else if ([
+                                      Mode.line,
+                                      Mode.rectangle,
+                                      Mode.circle,
+                                      Mode.arrow
+                                    ].contains(mode)) {
+                                      if (currentShape != null) {
+                                        shapes.add(currentShape!);
+                                        currentShape = null;
                                       }
-                                      currentPoint = null;
-                                    });
-                                  }
-                                },
-                                panEnabled: mode == Mode.pan,
-                                child: Stack(
-                                  children: [
-                                    CustomPaint(
-                                      painter: PdfPagePainter(
-                                          _pdfImages[currentPage]),
-                                      child: Container(),
+                                    }
+                                    currentPoint = null;
+                                  });
+                                }
+                              },
+                              panEnabled: mode == Mode.pan,
+                              child: Stack(
+                                children: [
+                                  CustomPaint(
+                                    painter: PdfPagePainter(
+                                        _pdfImages[currentPage - 1]),
+                                    child: Container(),
+                                  ),
+                                  CustomPaint(
+                                    painter: DrawingPainter(
+                                      _getAbsoluteLines(lines),
+                                      _getAbsoluteLines(highlights),
+                                      _getAbsoluteTexts(texts),
+                                      shapes: _getAbsoluteShapes(shapes),
+                                      currentShape:
+                                          _getAbsoluteShape(currentShape),
                                     ),
-                                    CustomPaint(
-                                      painter: DrawingPainter(
-                                        _getAbsoluteLines(lines),
-                                        _getAbsoluteLines(highlights),
-                                        _getAbsoluteTexts(texts),
-                                        shapes: _getAbsoluteShapes(shapes),
-                                        currentShape:
-                                            _getAbsoluteShape(currentShape),
-                                        panOffset: _currentPanOffset,
+                                  ),
+                                  ...texts.map((text) {
+                                    return Positioned(
+                                      left: text.position.dx * _scale,
+                                      top: text.position.dy * _scale,
+                                      child: Draggable<TextAnnotation>(
+                                        data: text,
+                                        feedback: Material(
+                                          child: Transform.scale(
+                                            scale: _scale,
+                                            child: Text(text.text,
+                                                style: text.style),
+                                          ),
+                                        ),
+                                        childWhenDragging: Container(),
+                                        onDraggableCanceled:
+                                            (velocity, offset) {
+                                          final postion =
+                                              _getNormalizedOffset(offset);
+                                          final inverseMatrix =
+                                              Matrix4.tryInvert(
+                                                  _transformationController
+                                                      .value);
+                                          if (inverseMatrix != null) {
+                                            final transformedOffset =
+                                                MatrixUtils.transformPoint(
+                                                    inverseMatrix, offset);
+                                            setState(() {
+                                              text.position = offset;
+                                            });
+                                          }
+                                        },
+                                        child: GestureDetector(
+                                          onTap: () {
+                                            setState(() {
+                                              text.isSelected =
+                                                  !text.isSelected;
+                                            });
+                                          },
+                                          child: Text(text.text,
+                                              style: TextStyle(
+                                                  color: Colors.transparent)),
+                                        ),
                                       ),
-                                    ),
-                                  ],
-                                ),
+                                    );
+                                  }).toList(),
+                                ],
                               ),
                             ),
                           ),
@@ -600,7 +593,11 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
     // _pdfViewerController.zoomLevel = 1.0;
     // zoomLevel = _pdfViewerController.zoomLevel;
     //  setState(() {});
+
     try {
+      if (_scale > 1.0 || _scale < 1.0) {
+        _resetZoom();
+      }
       final Uint8List? screenshot =
           await screenshotController.capture(pixelRatio: 4);
       if (screenshot == null) {
@@ -608,7 +605,8 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
         return null;
       }
 
-      return _cropImage(screenshot);
+      return screenshot;
+      //_cropImage(screenshot);
     } catch (e) {
       print("Error capturing screenshot: $e");
       return null;
@@ -624,44 +622,37 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
     }
   }
 
-  Uint8List _cropImage(Uint8List imageBytes) {
-    final image = img.decodeImage(imageBytes);
-    if (image == null) return imageBytes;
+  // Uint8List _cropImage(Uint8List imageBytes) {
+  //   final image = img.decodeImage(imageBytes);
+  //   if (image == null) return imageBytes;
 
-    final cropMarginLeft = 50;
-    final cropMarginTop = 120;
-    final cropMarginRight = 50;
-    final cropMarginBottom = 100;
+  //   final cropMarginLeft = 50;
+  //   final cropMarginTop = 120;
+  //   final cropMarginRight = 50;
+  //   final cropMarginBottom = 100;
 
-    final croppedWidth = image.width - cropMarginLeft - cropMarginRight;
-    final croppedHeight = image.height - cropMarginTop - cropMarginBottom;
+  //   final croppedWidth = image.width - cropMarginLeft - cropMarginRight;
+  //   final croppedHeight = image.height - cropMarginTop - cropMarginBottom;
 
-    final croppedImage = img.copyCrop(
-      image,
-      x: cropMarginLeft,
-      y: cropMarginTop,
-      width: croppedWidth,
-      height: croppedHeight,
-    );
+  //   final croppedImage = img.copyCrop(
+  //     image,
+  //     x: cropMarginLeft,
+  //     y: cropMarginTop,
+  //     width: croppedWidth,
+  //     height: croppedHeight,
+  //   );
 
-    return Uint8List.fromList(img.encodePng(croppedImage));
-  }
+  //   return Uint8List.fromList(img.encodePng(croppedImage));
+  // }
 
   bool _isLoading = false;
   Future<void> _savePdf() async {
-    print("pathh = $_selectedPdfPath");
     try {
-      final originalPdfFile = File(_selectedPdfPath!);
-      final originalPdfBytes = originalPdfFile.readAsBytesSync();
       final pdfDoc = pw.Document();
-
-      // final originalPdf = PdfDocument(inputBytes: originalPdfBytes);
-
       print("Processing pages...");
       bool hasPages = false;
 
       for (int i = 1; i <= _pdfImages.length; i++) {
-        print("modified pages length ${modifiedPages.length}");
         if (modifiedPages.contains(i)) {
           Uint8List? screenshot = pageScreenshots[i];
           if (screenshot == null) {
@@ -669,21 +660,25 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
             screenshot = pageScreenshots[i];
           }
           if (screenshot != null) {
-            print("screenshot added ");
             final image = pw.MemoryImage(screenshot);
             pdfDoc.addPage(
               pw.Page(
                 build: (pw.Context context) {
                   return pw.FullPage(
-                      ignoreMargins: true,
-                      child: pw.Image(image, fit: pw.BoxFit.fill));
+                    ignoreMargins: true,
+                    child: pw.Image(
+                      image,
+                      fit: pw.BoxFit.fill,
+                      width: _pdfImages[0].width.toDouble(),
+                      height: _pdfImages[0].height.toDouble(),
+                    ),
+                  );
                 },
               ),
             );
             hasPages = true;
           }
         } else {
-          // Get ByteData from the Image object and convert it to Uint8List
           final ByteData? byteData =
               await _pdfImages[i - 1].toByteData(format: ImageByteFormat.png);
           if (byteData != null) {
@@ -733,6 +728,84 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
     setState(() {});
   }
 
+  Future<void> _savePdfDirectly() async {
+    // Load the original PDF
+    final pdfDocument =
+        PdfDocument(inputBytes: await File(_selectedPdfPath!).readAsBytes());
+
+    // Process each page
+    for (int i = 0; i < _totalPages; i++) {
+      final PdfPage pdfPage = pdfDocument.pages[i];
+
+      // Get the page's graphics object for drawing
+      final PdfGraphics graphics = pdfPage.graphics;
+
+      // Draw all lines
+      if (pageLines.containsKey(i + 1)) {
+        for (final line in pageLines[i + 1]!) {
+          final paint = PdfPen(
+              PdfColor(line.color.red, line.color.green, line.color.blue),
+              width: line.strokeWidth);
+
+          for (int j = 0; j < line.points.length - 1; j++) {
+            final point1 = line.points[j];
+            final point2 = line.points[j + 1];
+            graphics.drawLine(paint, Offset(point1.dx, point1.dy),
+                Offset(point2.dx, point2.dy));
+          }
+        }
+      }
+
+      // Draw all text annotations
+      if (pageTexts.containsKey(i + 1)) {
+        for (final text in pageTexts[i + 1]!) {
+          final PdfFont font = PdfStandardFont(
+              PdfFontFamily.helvetica, text.style.fontSize ?? 12);
+          graphics.drawString(
+            text.text,
+            font,
+            brush: PdfSolidBrush(PdfColor(text.style.color!.red,
+                text.style.color!.green, text.style.color!.blue)),
+            bounds: Rect.fromLTWH(text.position.dx, text.position.dy, 500, 50),
+          );
+        }
+      }
+
+      // Draw shapes (rectangles, circles, etc.)
+      if (pageShapes.containsKey(i + 1)) {
+        for (final shape in pageShapes[i + 1]!) {
+          final paint = PdfPen(
+              PdfColor(shape.color.red, shape.color.green, shape.color.blue),
+              width: shape.strokeWidth);
+          if (shape.shapeType == Mode.rectangle) {
+            graphics.drawRectangle(
+              bounds: Rect.fromPoints(Offset(shape.start.dx, shape.start.dy),
+                  Offset(shape.end.dx, shape.end.dy)),
+              pen: paint,
+            );
+          } else if (shape.shapeType == Mode.circle) {
+            final center = Offset((shape.start.dx + shape.end.dx) / 2,
+                (shape.start.dy + shape.end.dy) / 2);
+            final radius = (shape.start - shape.end).distance / 2;
+            graphics.drawEllipse(
+              Rect.fromCircle(center: center, radius: radius),
+              pen: paint,
+            );
+          }
+        }
+      }
+    }
+
+    // Save the modified PDF
+    final output = await getTemporaryDirectory();
+    final file = File('${output.path}/annotated_pdf.pdf');
+    await file.writeAsBytes(await pdfDocument.save());
+    await OpenFile.open(file.path);
+
+    // Dispose of the PDF document
+    pdfDocument.dispose();
+  }
+
   List<ShapeAnnotation> _getAbsoluteShapes(
       List<ShapeAnnotation> normalizedShapes) {
     return normalizedShapes.map((shape) {
@@ -772,10 +845,10 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
             _selectedPdfPath = filePath;
             _pdfImages = [];
             _totalPages = 0;
-            _drawings = [];
+            //       _drawings = [];
           });
 
-          _loadAndRasterizePdf(filePath);
+          _loadAndRenderPdf(filePath);
         }
       }
     } catch (e) {
@@ -783,28 +856,32 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
     }
   }
 
-  Future<void> _loadAndRasterizePdf(String filePath) async {
+  Future<void> _loadAndRenderPdf(String filePath) async {
     try {
-      final file = File(filePath);
-      final documentBytes = await file.readAsBytes();
+      final doc = await pr.PdfDocument.openFile(filePath);
+      final int pageCount = doc.pageCount;
+      print("pages count ===> $pageCount");
+      for (int i = 1; i <= pageCount; i++) {
+        final page = await doc.getPage(i);
 
-      final pages = Printing.raster(documentBytes, dpi: 300);
+        final image = await page.render(
+          width: page.width.toInt(),
+          height: page.height.toInt(),
+          fullWidth: page.width,
+          fullHeight: page.height,
+        );
 
-      int pageCount = 0;
-      final List<ui.Image> images = [];
-      await for (var page in pages) {
-        final image = await page.toImage();
-        images.add(image);
-        _drawings.add([]);
-        pageCount++;
+        final ui.Image renderedImage = await image.createImageDetached();
+
+        setState(() {
+          _pdfImages.add(renderedImage);
+          _totalPages = pageCount;
+        });
+
+        print("total images ====> ${_pdfImages.length}");
       }
-
-      setState(() {
-        _pdfImages = images;
-        _totalPages = pageCount;
-      });
     } catch (e) {
-      print('Error loading or rasterizing PDF: $e');
+      print('Error loading or rendering PDF: $e');
     }
   }
 
@@ -897,24 +974,23 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
     });
   }
 
-  Offset _getNormalizedOffset(Offset localPosition) {
-    if (pageSize == null || _scale == 0) return localPosition;
-
-    // Normalize coordinates to a scale [0, 1]
-    return Offset(
-      localPosition.dx / (pageSize!.width * _scale),
-      localPosition.dy / (pageSize!.height * _scale),
-    );
-  }
+  // Offset _getNormalizedOffset(Offset localPosition) {
+  //   if (_scale == 0) return localPosition;
+  //   print("get normalized offset ");
+  //   // Normalize coordinates to a scale [0, 1]
+  //   return Offset(
+  //     localPosition.dx / (_scale),
+  //     localPosition.dy / (_scale),
+  //   );
+  // }
 
   Offset _getAbsoluteOffset(Offset normalizedOffset) {
-    if (pageSize == null) return normalizedOffset;
-
-    // Map normalized coordinates [0, 1] back to absolute page coordinates
-    return Offset(
-      normalizedOffset.dx * pageSize!.width * _scale,
-      normalizedOffset.dy * pageSize!.height * _scale,
-    );
+    //   if (pageSize == null) return normalizedOffset;
+    return normalizedOffset;
+    // Offset(
+    //   normalizedOffset.dx,
+    //   normalizedOffset.dy,
+    // );
   }
 
   List<DrawnLine> _getAbsoluteLines(List<DrawnLine> normalizedLines) {
