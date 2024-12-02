@@ -61,7 +61,7 @@ class _ZoomableDrawingCanvasState extends State<ZoomableDrawingCanvas> {
 
   double zoom = 1.0;
   Offset offset = Offset.zero;
-  bool isDrawingMode = false;
+  bool isDrawingMode = true;
   bool isErasing = false;
   bool isDrawingActive = false;
 
@@ -97,7 +97,7 @@ class _ZoomableDrawingCanvasState extends State<ZoomableDrawingCanvas> {
 
       // Get screen dimensions
       screenSize = MediaQuery.of(context).size;
-      double maxWidth = screenSize!.width * 10;
+      double maxWidth = screenSize!.width;
       double maxHeight = screenSize!.height * 0.8; // 80% of screen height
 
       // Calculate scale factors for both width and height
@@ -154,225 +154,199 @@ class _ZoomableDrawingCanvasState extends State<ZoomableDrawingCanvas> {
     return Scaffold(
       appBar: AppBar(
         actions: [
-          pdfImage == null
-              ? SizedBox()
-              : ToggleButtons(
-                  isSelected: [
-                    isDrawingMode && !isErasing,
-                    !isDrawingMode,
-                    isDrawingMode && isErasing
-                  ],
-                  onPressed: (int index) {
-                    setState(() {
-                      currentLine =
-                          null; // Clear current line when switching modes
-                      if (index == 0) {
-                        isDrawingMode = true;
-                        isErasing = false;
-                      } else if (index == 1) {
-                        isDrawingMode = false;
-                        isErasing = false;
-                      } else if (index == 2) {
-                        isDrawingMode = true;
-                        isErasing = true;
-                      }
-                    });
-                  },
-                  children: [
-                    Tooltip(
-                      message: 'Pen Tool',
-                      child: Icon(Icons.edit),
-                    ),
-                    Tooltip(
-                      message: 'Pan/Zoom Tool',
-                      child: Icon(Icons.pan_tool),
-                    ),
-                    Tooltip(
-                      message: 'Eraser Tool',
-                      child: Icon(Icons.auto_fix_high),
-                    ),
-                  ],
-                ),
-          pdfImage == null
-              ? SizedBox()
-              : IconButton(
-                  icon: Icon(Icons.save),
-                  onPressed: _exportToPdf,
-                  tooltip: 'Export to PDF',
-                ),
+          ToggleButtons(
+            isSelected: [
+              isDrawingMode && !isErasing,
+              !isDrawingMode,
+              isDrawingMode && isErasing
+            ],
+            onPressed: (int index) {
+              setState(() {
+                currentLine = null; // Clear current line when switching modes
+                if (index == 0) {
+                  isDrawingMode = true;
+                  isErasing = false;
+                } else if (index == 1) {
+                  isDrawingMode = false;
+                  isErasing = false;
+                } else if (index == 2) {
+                  isDrawingMode = true;
+                  isErasing = true;
+                }
+              });
+            },
+            children: [
+              Tooltip(
+                message: 'Pen Tool',
+                child: Icon(Icons.edit),
+              ),
+              Tooltip(
+                message: 'Pan/Zoom Tool',
+                child: Icon(Icons.pan_tool),
+              ),
+              Tooltip(
+                message: 'Eraser Tool',
+                child: Icon(Icons.auto_fix_high),
+              ),
+            ],
+          ),
+          IconButton(
+            icon: Icon(Icons.save),
+            onPressed: _exportToPdf,
+            tooltip: 'Export to PDF',
+          ),
+          IconButton(
+            icon: Icon(Icons.folder),
+            onPressed: pickAndLoadPDF,
+          ),
         ],
       ),
       body: pdfImage == null
-          ? Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Center(child: Text('Please select a PDF file')),
-                TextButton(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.folder),
-                      Text("Pick a File"),
+          ? Center(child: Text('Please select a PDF file'))
+          : Center(
+              child: ClipRect(
+                child: Container(
+                  width: containerWidth,
+                  height: containerHeight,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: Colors.grey),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.withOpacity(0.5),
+                        spreadRadius: 2,
+                        blurRadius: 5,
+                        offset: Offset(0, 3),
+                      ),
                     ],
                   ),
-                  onPressed: pickAndLoadPDF,
-                ),
-              ],
-            )
-          : Column(
-              children: [
-                ClipRect(
-                  child: Container(
-                    width: containerWidth,
-                    height: containerHeight,
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      border: Border.all(color: Colors.grey),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.grey.withOpacity(0.5),
-                          spreadRadius: 2,
-                          blurRadius: 5,
-                          offset: Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: Stack(
-                      children: [
-                        GestureDetector(
-                          onScaleStart: (details) {
-                            if (!_isPointInCanvas(details.localFocalPoint)) {
-                              currentLine = null;
-                              return;
-                            }
+                  child: Stack(
+                    children: [
+                      GestureDetector(
+                        onScaleStart: (details) {
+                          if (!_isPointInCanvas(details.localFocalPoint)) {
+                            currentLine = null;
+                            return;
+                          }
 
-                            setState(() {
-                              isDrawingActive = true;
-                              if (!isDrawingMode) {
-                                previousZoom = zoom;
-                                previousOffset = offset;
-                                currentLine = null;
-                              } else {
-                                final normalizedPoint = _getNormalizedPoint(
-                                    details.localFocalPoint);
-                                currentLine = DrawingLine(
-                                  points: [normalizedPoint],
-                                  color: isErasing
-                                      ? const ui.Color.fromARGB(255, 201, 4, 4)
-                                          .withAlpha(30)
-                                      : Colors.black,
-                                  strokeWidth:
-                                      isErasing ? eraserWidth : strokeWidth,
-                                  isEraser: isErasing,
-                                );
-                              }
-                            });
-                          },
-                          onScaleUpdate: (details) {
-                            if (!_isPointInCanvas(details.localFocalPoint)) {
-                              setState(() {
-                                if (isErasing) currentLine = null;
-                              });
-                              return;
-                            }
-
-                            setState(() {
-                              if (!isDrawingMode) {
-                                // Calculate new zoom
-                                final newZoom = (previousZoom * details.scale)
-                                    .clamp(0.5, 5.0);
-
-                                if (details.scale == 1.0) {
-                                  // Enhanced pan operation with higher speed and direct delta application
-                                  final panSpeed =
-                                      3.0; // Increased from 2.0 to 3.0
-                                  final rawOffset = previousOffset +
-                                      (details.focalPointDelta * panSpeed);
-
-                                  // Update the offset immediately without waiting for previous animation
-                                  offset = _constrainOffset(rawOffset, zoom);
-
-                                  // Update previousOffset to current position to prevent jump on next update
-                                  previousOffset = offset;
-                                } else {
-                                  // Zoom operation
-                                  final focalPoint = details.localFocalPoint;
-                                  final oldScale = zoom;
-                                  final newScale = newZoom;
-
-                                  // Calculate new offset with enhanced focal point maintenance
-                                  final newOffset = focalPoint -
-                                      (focalPoint - previousOffset) *
-                                          (newScale / oldScale);
-
-                                  offset =
-                                      _constrainOffset(newOffset, newScale);
-                                  zoom = newScale;
-                                }
-                              } else if (currentLine != null) {
-                                final normalizedPoint = _getNormalizedPoint(
-                                    details.localFocalPoint);
-                                currentLine!.points.add(normalizedPoint);
-
-                                if (isErasing) {
-                                  _handleErasure(normalizedPoint);
-                                }
-                              }
-                            });
-                          },
-                          onScaleEnd: (details) {
-                            setState(() {
-                              isDrawingActive = false;
-                              if (isDrawingMode &&
-                                  currentLine != null &&
-                                  !isErasing) {
-                                lines.add(currentLine!);
-                              }
-                              currentLine = null;
-                            });
-                          },
-                          child: CustomPaint(
-                            key: canvasKey,
-                            painter: DrawingPainter(
-                              pdfImage: pdfImage!,
-                              lines: lines,
-                              currentLine: currentLine,
-                              zoom: zoom,
-                              offset: offset,
-                              eraserRadius: isErasing && isDrawingActive
-                                  ? eraserWidth / 2
-                                  : 0,
-                              canvasSize: Size(canvasWidth, canvasHeight),
-                            ),
-                            size: Size(canvasWidth, canvasHeight),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                Spacer(),
-                if (isErasing)
-                  SafeArea(
-                    child: Positioned(
-                      left: 0,
-                      right: 0,
-                      bottom: 20,
-                      child: Slider(
-                        value: eraserWidth,
-                        min: 10,
-                        max: 50,
-                        onChanged: (value) {
                           setState(() {
-                            eraserWidth = value;
+                            isDrawingActive = true;
+                            if (!isDrawingMode) {
+                              previousZoom = zoom;
+                              previousOffset = offset;
+                              currentLine = null;
+                            } else {
+                              final normalizedPoint =
+                                  _getNormalizedPoint(details.localFocalPoint);
+                              currentLine = DrawingLine(
+                                points: [normalizedPoint],
+                                color: isErasing ? Colors.white : Colors.black,
+                                strokeWidth:
+                                    isErasing ? eraserWidth : strokeWidth,
+                                isEraser: isErasing,
+                              );
+                            }
                           });
                         },
-                        label: 'Eraser Size',
+                        onScaleUpdate: (details) {
+                          if (!_isPointInCanvas(details.localFocalPoint)) {
+                            setState(() {
+                              if (isErasing) currentLine = null;
+                            });
+                            return;
+                          }
+
+                          setState(() {
+                            if (!isDrawingMode) {
+                              // Calculate new zoom
+                              final newZoom = (previousZoom * details.scale)
+                                  .clamp(0.5, 5.0);
+
+                              if (details.scale == 1.0) {
+                                // Enhanced pan operation with higher speed and direct delta application
+                                final panSpeed =
+                                    3.0; // Increased from 2.0 to 3.0
+                                final rawOffset = previousOffset +
+                                    (details.focalPointDelta * panSpeed);
+
+                                // Update the offset immediately without waiting for previous animation
+                                offset = _constrainOffset(rawOffset, zoom);
+
+                                // Update previousOffset to current position to prevent jump on next update
+                                previousOffset = offset;
+                              } else {
+                                // Zoom operation
+                                final focalPoint = details.localFocalPoint;
+                                final oldScale = zoom;
+                                final newScale = newZoom;
+
+                                // Calculate new offset with enhanced focal point maintenance
+                                final newOffset = focalPoint -
+                                    (focalPoint - previousOffset) *
+                                        (newScale / oldScale);
+
+                                offset = _constrainOffset(newOffset, newScale);
+                                zoom = newScale;
+                              }
+                            } else if (currentLine != null) {
+                              final normalizedPoint =
+                                  _getNormalizedPoint(details.localFocalPoint);
+                              currentLine!.points.add(normalizedPoint);
+
+                              if (isErasing) {
+                                _handleErasure(normalizedPoint);
+                              }
+                            }
+                          });
+                        },
+                        onScaleEnd: (details) {
+                          setState(() {
+                            isDrawingActive = false;
+                            if (isDrawingMode &&
+                                currentLine != null &&
+                                !isErasing) {
+                              lines.add(currentLine!);
+                            }
+                            currentLine = null;
+                          });
+                        },
+                        child: CustomPaint(
+                          key: canvasKey,
+                          painter: DrawingPainter(
+                            pdfImage: pdfImage!,
+                            lines: lines,
+                            currentLine: currentLine,
+                            zoom: zoom,
+                            offset: offset,
+                            eraserRadius: isErasing && isDrawingActive
+                                ? eraserWidth / 2
+                                : 0,
+                            canvasSize: Size(canvasWidth, canvasHeight),
+                          ),
+                          size: Size(canvasWidth, canvasHeight),
+                        ),
                       ),
-                    ),
+                      if (isErasing)
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 20,
+                          child: Slider(
+                            value: eraserWidth,
+                            min: 10,
+                            max: 50,
+                            onChanged: (value) {
+                              setState(() {
+                                eraserWidth = value;
+                              });
+                            },
+                            label: 'Eraser Size',
+                          ),
+                        ),
+                    ],
                   ),
-              ],
+                ),
+              ),
             ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
