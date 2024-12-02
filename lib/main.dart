@@ -35,22 +35,29 @@ void main() {
 class DrawingPoint {
   final Offset point;
   final Paint paint;
+  final double baseStrokeWidth; // Add this field
 
-  DrawingPoint(this.point, this.paint);
+  DrawingPoint(this.point, this.paint, this.baseStrokeWidth);
 }
 
 class DrawingPath {
   final List<DrawingPoint> points;
   final Paint paint;
+  final double baseStrokeWidth; // Add this field
 
-  DrawingPath(this.points, this.paint);
+  DrawingPath(this.points, this.paint, this.baseStrokeWidth);
 
-  Path createSmoothPath() {
+  // Update createSmoothPath to use scaled stroke width
+  Path createSmoothPath(double currentZoom) {
     if (points.isEmpty) return Path();
+
+    // Scale the stroke width based on current zoom
+    paint.strokeWidth = baseStrokeWidth * currentZoom;
+
     if (points.length < 2) {
       return Path()
         ..addOval(Rect.fromCircle(
-            center: points[0].point, radius: points[0].paint.strokeWidth / 2));
+            center: points[0].point, radius: paint.strokeWidth / 2));
     }
 
     Path path = Path();
@@ -59,14 +66,13 @@ class DrawingPath {
     if (points.length == 2) {
       path.lineTo(points[1].point.dx, points[1].point.dy);
     } else {
-      // Use Catmull-Rom spline for smooth curves
+      // Rest of the existing Catmull-Rom spline code remains the same
       for (int i = 0; i < points.length - 1; i++) {
         final p0 = i > 0 ? points[i - 1].point : points[i].point;
         final p1 = points[i].point;
         final p2 = points[i + 1].point;
         final p3 = i + 2 < points.length ? points[i + 2].point : p2;
 
-        // Catmull-Rom to Cubic Bezier conversion
         final controlPoint1 = Offset(
           p1.dx + (p2.dx - p0.dx) / 6,
           p1.dy + (p2.dy - p0.dy) / 6,
@@ -156,7 +162,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white60,
-      appBar: AppBar(
+      appBar: // First, add this widget below the existing action buttons in the AppBar:
+          AppBar(
         actions: [
           IconButton(
             icon: const Icon(Icons.file_open),
@@ -189,6 +196,54 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
               });
             },
           ),
+          // Add stroke width control
+          if (mode == Mode.draw)
+            SizedBox(
+              width: 150,
+              child: Row(
+                children: [
+                  const Icon(Icons.line_weight, size: 20),
+                  Expanded(
+                    child: Slider(
+                      value: currentStrokePen,
+                      min: 1.0,
+                      max: 10.0,
+                      divisions: 9,
+                      label: currentStrokePen.round().toString(),
+                      onChanged: (value) {
+                        setState(() {
+                          currentStrokePen = value;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          // Add highlight width control
+          if (mode == Mode.highlight)
+            SizedBox(
+              width: 150,
+              child: Row(
+                children: [
+                  const Icon(Icons.line_weight, size: 20),
+                  Expanded(
+                    child: Slider(
+                      value: currentStrokeHighlight,
+                      min: 5.0,
+                      max: 30.0,
+                      divisions: 5,
+                      label: currentStrokeHighlight.round().toString(),
+                      onChanged: (value) {
+                        setState(() {
+                          currentStrokeHighlight = value;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (!isExporting)
             IconButton(
               icon: const Icon(Icons.save),
@@ -255,6 +310,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                         final transformedOffset =
                                             _getTransformedOffset(
                                                 details.localFocalPoint);
+                                        final baseStrokeWidth =
+                                            mode == Mode.highlight
+                                                ? currentStrokeHighlight
+                                                : currentStrokePen;
                                         setState(() {
                                           currentPath = [
                                             DrawingPoint(
@@ -263,16 +322,13 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                                 ..color = mode == Mode.highlight
                                                     ? currentColorHighlight
                                                     : currentColor
-                                                ..strokeWidth =
-                                                    _getAdjustedStrokeWidth(
-                                                  mode == Mode.highlight
-                                                      ? currentStrokeHighlight
-                                                      : currentStrokePen,
-                                                )
+                                                ..strokeWidth = baseStrokeWidth *
+                                                    zoom // Initial scaled width
                                                 ..strokeCap = StrokeCap.round
                                                 ..strokeJoin = StrokeJoin.round
                                                 ..style = PaintingStyle.stroke
                                                 ..isAntiAlias = true,
+                                              baseStrokeWidth, // Store the base width
                                             )
                                           ];
                                         });
@@ -293,6 +349,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                                         transformedOffset)
                                                     .distance >
                                                 1.0 / zoom) {
+                                          final baseStrokeWidth =
+                                              mode == Mode.highlight
+                                                  ? currentStrokeHighlight
+                                                  : currentStrokePen;
                                           currentPath.add(
                                             DrawingPoint(
                                               transformedOffset,
@@ -301,53 +361,24 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                                     ? currentColorHighlight
                                                     : currentColor
                                                 ..strokeWidth =
-                                                    _getAdjustedStrokeWidth(
-                                                  mode == Mode.highlight
-                                                      ? currentStrokeHighlight
-                                                      : currentStrokePen,
-                                                )
+                                                    baseStrokeWidth * zoom
                                                 ..strokeCap = StrokeCap.round
                                                 ..strokeJoin = StrokeJoin.round
                                                 ..style = PaintingStyle.stroke
                                                 ..isAntiAlias = true,
+                                              baseStrokeWidth,
                                             ),
                                           );
-                                          setState(() {
-                                            // Force rebuild for the new point
-                                          });
+                                          setState(() {});
                                         }
                                       } else {
-                                        // Handle zooming and panning
-                                        if (details.scale != 1.0) {
-                                          final newZoom =
-                                              (previousZoom * details.scale)
-                                                  .clamp(0.2 / quality, 1.0);
-                                          final focalPoint =
-                                              details.localFocalPoint;
-                                          final double zoomFactor =
-                                              newZoom / zoom;
-                                          final Offset normalizedOffset =
-                                              offset - focalPoint;
-                                          final Offset scaledOffset =
-                                              normalizedOffset * zoomFactor;
-                                          final Offset offsetDelta =
-                                              scaledOffset - normalizedOffset;
-                                          zoom = newZoom;
-                                          offset = _constrainOffset(
-                                              offset + offsetDelta, newZoom);
-                                        } else {
-                                          offset = _constrainOffset(
-                                            offset + details.focalPointDelta,
-                                            zoom,
-                                          );
-                                        }
-                                        setState(() {});
-
                                         setState(() {
+                                          // Handle zooming and panning in a single setState
                                           if (details.scale != 1.0) {
+                                            // Changed the clamp range to allow higher zoom levels
                                             final newZoom =
                                                 (previousZoom * details.scale)
-                                                    .clamp(0.2 / quality, 1.0);
+                                                    .clamp(0.2 / quality, 5.0);
                                             final focalPoint =
                                                 details.localFocalPoint;
                                             final double zoomFactor =
@@ -363,9 +394,9 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                                 offset + offsetDelta, newZoom);
                                           } else {
                                             offset = _constrainOffset(
-                                              offset + details.focalPointDelta,
-                                              zoom,
-                                            );
+                                                offset +
+                                                    details.focalPointDelta,
+                                                zoom);
                                           }
                                         });
                                       }
@@ -376,8 +407,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                           currentPath.isNotEmpty) {
                                         setState(() {
                                           addPathToCurrentPage(DrawingPath(
-                                              List.from(currentPath),
-                                              currentPath.first.paint));
+                                            List.from(currentPath),
+                                            currentPath.first.paint,
+                                            currentPath.first.baseStrokeWidth,
+                                          ));
                                           currentPath = [];
                                         });
                                       } else {
@@ -464,7 +497,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     final double horizontalRatio = containerSize.width / imageSize.width;
     final double verticalRatio = containerSize.height / imageSize.height;
 
-    // Compensate for the quality factor in the initial zoom
+    // Changed to allow the initial zoom to be larger than 1.0 if needed
     return math.min(horizontalRatio, verticalRatio) / quality;
   }
 
@@ -742,6 +775,7 @@ class PdfPainter extends CustomPainter {
   final List<DrawingPoint> currentPath;
 
   PdfPainter(this.image, this.zoom, this.offset, this.paths, this.currentPath);
+
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
@@ -752,11 +786,7 @@ class PdfPainter extends CustomPainter {
     // Draw PDF
     paintImage(
       canvas: canvas,
-      rect: Offset.zero &
-          Size(
-            image.width.toDouble(),
-            image.height.toDouble(),
-          ),
+      rect: Offset.zero & Size(image.width.toDouble(), image.height.toDouble()),
       image: image,
       filterQuality: FilterQuality.high,
     );
@@ -764,20 +794,23 @@ class PdfPainter extends CustomPainter {
     // Enable anti-aliasing for smoother lines
     canvas.saveLayer(null, Paint()..isAntiAlias = true);
 
-    // Draw completed paths
+    // Draw completed paths with scaled stroke width
     for (final path in paths) {
       canvas.drawPath(
-        path.createSmoothPath(),
+        path.createSmoothPath(zoom),
         path.paint..isAntiAlias = true,
       );
     }
 
-    // Draw current path
+    // Draw current path with scaled stroke width
     if (currentPath.isNotEmpty) {
-      final currentDrawingPath =
-          DrawingPath(currentPath, currentPath.first.paint);
+      final currentDrawingPath = DrawingPath(
+        currentPath,
+        currentPath.first.paint,
+        currentPath.first.baseStrokeWidth,
+      );
       canvas.drawPath(
-        currentDrawingPath.createSmoothPath(),
+        currentDrawingPath.createSmoothPath(zoom),
         currentPath.first.paint..isAntiAlias = true,
       );
     }
@@ -852,57 +885,115 @@ void exportPdfIsolate(List<dynamic> args) async {
 
   try {
     final pdf = pw.Document();
-    final scale = data.pageWidth / data.originalWidth;
+
+    // Calculate scale factors
+    final renderScale = 3.0; // This should match your 'quality' variable
+    final pdfScale = data.pageWidth / data.originalWidth;
+
+    // Combined scale for position coordinates
+    final combinedScale = pdfScale / renderScale;
+
+    // Separate scale for stroke width (reduced by a factor to match screen appearance)
+    final strokeScale = combinedScale * 0.5; // Adjust this factor if needed
 
     for (int i = 0; i < data.pageCount; i++) {
+      final pageDrawings = data.pageDrawings[i] ?? [];
+
       pdf.addPage(
         pw.Page(
           pageFormat: PdfPageFormat(data.pageWidth, data.pageHeight),
           build: (context) {
             return pw.Stack(
               children: [
+                // Base PDF page image
                 pw.Positioned.fill(
                   child: pw.Image(
                     pw.MemoryImage(data.pageImages[i]),
-                    fit: pw.BoxFit.contain,
+                    fit: pw.BoxFit.fill,
                   ),
                 ),
-                if (data.pageDrawings.containsKey(i))
-                  pw.Transform.translate(
-                    offset: PdfPoint(0, data.pageHeight),
-                    child: pw.Transform(
-                      transform: Matrix4.diagonal3Values(1, -1, 1),
-                      adjustLayout: true,
-                      child: pw.CustomPaint(
-                        painter: (PdfGraphics canvas, PdfPoint size) {
-                          final drawings = data.pageDrawings[i]!;
-                          for (var path in drawings) {
-                            if (path.points.length < 2) continue;
+                // Annotations layer
+                if (pageDrawings.isNotEmpty)
+                  pw.Positioned.fill(
+                    child: pw.CustomPaint(
+                      painter: (PdfGraphics canvas, PdfPoint size) {
+                        for (var drawing in pageDrawings) {
+                          if (drawing.points.isEmpty) continue;
 
-                            final scaledWidth = path.paint.strokeWidth * scale;
+                          // Convert color to PDF format with opacity
+                          final color = drawing.paint.color;
+                          final r = color.red / 255;
+                          final g = color.green / 255;
+                          final b = color.blue / 255;
+                          final a = color.alpha / 255;
+
+                          final pdfColor = PdfColor(r, g, b);
+                          canvas.setStrokeColor(pdfColor);
+                          canvas.setGraphicState(PdfGraphicState(opacity: a));
+
+                          // Apply the reduced stroke scale
+                          final strokeWidth =
+                              drawing.baseStrokeWidth * strokeScale;
+                          canvas.setLineWidth(strokeWidth);
+                          canvas.setLineCap(PdfLineCap.round);
+                          canvas.setLineJoin(PdfLineJoin.round);
+
+                          if (drawing.points.length < 2) {
+                            // Handle single point as a small line
+                            final point = drawing.points[0].point;
+                            final scaledX = point.dx * combinedScale;
+                            final scaledY =
+                                data.pageHeight - (point.dy * combinedScale);
                             canvas
-                              ..setStrokeColor(
-                                  PdfColor.fromInt(path.paint.color.value))
-                              ..setLineWidth(
-                                  scaledWidth.isFinite ? scaledWidth : 1.0);
+                              ..moveTo(scaledX, scaledY)
+                              ..lineTo(scaledX + strokeWidth, scaledY)
+                              ..strokePath();
+                          } else {
+                            // Draw smooth path for multiple points using Catmull-Rom splines
+                            for (int j = 0;
+                                j < drawing.points.length - 1;
+                                j++) {
+                              final p0 = j > 0
+                                  ? drawing.points[j - 1].point
+                                  : drawing.points[j].point;
+                              final p1 = drawing.points[j].point;
+                              final p2 = drawing.points[j + 1].point;
+                              final p3 = j + 2 < drawing.points.length
+                                  ? drawing.points[j + 2].point
+                                  : p2;
 
-                            for (int j = 0; j < path.points.length - 1; j++) {
-                              final start = path.points[j].point;
-                              final end = path.points[j + 1].point;
-
-                              if (start.dx.isFinite &&
-                                  start.dy.isFinite &&
-                                  end.dx.isFinite &&
-                                  end.dy.isFinite) {
-                                canvas
-                                  ..moveTo(start.dx * scale, start.dy * scale)
-                                  ..lineTo(end.dx * scale, end.dy * scale)
-                                  ..strokePath();
+                              if (j == 0) {
+                                canvas.moveTo(p1.dx * combinedScale,
+                                    data.pageHeight - (p1.dy * combinedScale));
                               }
+
+                              // Calculate control points for cubic Bezier curve
+                              final controlPoint1 = Offset(
+                                p1.dx + (p2.dx - p0.dx) / 6,
+                                p1.dy + (p2.dy - p0.dy) / 6,
+                              );
+
+                              final controlPoint2 = Offset(
+                                p2.dx - (p3.dx - p1.dx) / 6,
+                                p2.dy - (p3.dy - p1.dy) / 6,
+                              );
+
+                              // Draw cubic Bezier curve with correct position scaling
+                              canvas.curveTo(
+                                controlPoint1.dx * combinedScale,
+                                data.pageHeight -
+                                    (controlPoint1.dy * combinedScale),
+                                controlPoint2.dx * combinedScale,
+                                data.pageHeight -
+                                    (controlPoint2.dy * combinedScale),
+                                p2.dx * combinedScale,
+                                data.pageHeight - (p2.dy * combinedScale),
+                              );
                             }
+                            canvas.strokePath();
                           }
-                        },
-                      ),
+                        }
+                      },
                     ),
                   ),
               ],
@@ -916,6 +1007,17 @@ void exportPdfIsolate(List<dynamic> args) async {
     await outputFile.writeAsBytes(await pdf.save());
     sendPort.send('success');
   } catch (e, st) {
-    sendPort.send('error: $e $st');
+    print('PDF Export Error: $e\n$st');
+    sendPort.send('error: $e');
   }
+}
+
+// Helper function to validate coordinates
+bool _isValidCoordinate(Offset point) {
+  return !point.dx.isNaN &&
+      !point.dx.isInfinite &&
+      !point.dy.isNaN &&
+      !point.dy.isInfinite &&
+      point.dx.abs() < 14400 && // PDF coordinate limit
+      point.dy.abs() < 14400; // PDF coordinate limit
 }
