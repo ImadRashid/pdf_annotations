@@ -1092,14 +1092,14 @@ void exportPdfIsolate(List<dynamic> args) async {
     final pdf = pw.Document();
 
     // Calculate scale factors
-    final renderScale = 3.0; // This should match your 'quality' variable
+    final renderScale = 4.0; // Match the quality variable in the viewer
     final pdfScale = data.pageWidth / data.originalWidth;
 
-    // Combined scale for position coordinates
+    // Adjust the combined scale to account for the new zoom calculations
     final combinedScale = pdfScale / renderScale;
 
-    // Separate scale for stroke width (reduced by a factor to match screen appearance)
-    final strokeScale = combinedScale * 0.5; // Adjust this factor if needed
+    // Adjust stroke scale to match the visual appearance
+    final strokeScale = combinedScale * 2.0; // Increased to match visual size
 
     for (int i = 0; i < data.pageCount; i++) {
       final pageDrawings = data.pageDrawings[i] ?? [];
@@ -1136,7 +1136,7 @@ void exportPdfIsolate(List<dynamic> args) async {
                           canvas.setStrokeColor(pdfColor);
                           canvas.setGraphicState(PdfGraphicState(opacity: a));
 
-                          // Apply the reduced stroke scale
+                          // Apply the adjusted stroke scale
                           final strokeWidth =
                               drawing.baseStrokeWidth * strokeScale;
                           canvas.setLineWidth(strokeWidth);
@@ -1144,7 +1144,7 @@ void exportPdfIsolate(List<dynamic> args) async {
                           canvas.setLineJoin(PdfLineJoin.round);
 
                           if (drawing.points.length < 2) {
-                            // Handle single point as a small line
+                            // Handle single point
                             final point = drawing.points[0].point;
                             final scaledX = point.dx * combinedScale;
                             final scaledY =
@@ -1154,7 +1154,7 @@ void exportPdfIsolate(List<dynamic> args) async {
                               ..lineTo(scaledX + strokeWidth, scaledY)
                               ..strokePath();
                           } else {
-                            // Draw smooth path for multiple points using Catmull-Rom splines
+                            // Draw smooth path
                             for (int j = 0;
                                 j < drawing.points.length - 1;
                                 j++) {
@@ -1172,7 +1172,7 @@ void exportPdfIsolate(List<dynamic> args) async {
                                     data.pageHeight - (p1.dy * combinedScale));
                               }
 
-                              // Calculate control points for cubic Bezier curve
+                              // Calculate control points
                               final controlPoint1 = Offset(
                                 p1.dx + (p2.dx - p0.dx) / 6,
                                 p1.dy + (p2.dy - p0.dy) / 6,
@@ -1183,7 +1183,7 @@ void exportPdfIsolate(List<dynamic> args) async {
                                 p2.dy - (p3.dy - p1.dy) / 6,
                               );
 
-                              // Draw cubic Bezier curve with correct position scaling
+                              // Draw curve
                               canvas.curveTo(
                                 controlPoint1.dx * combinedScale,
                                 data.pageHeight -
