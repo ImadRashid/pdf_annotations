@@ -38,7 +38,9 @@ dependencies:
   permission_handler: ^10.2.0
   open_file:
   printing:
+  collection: ^1.17.0
   pdf_render: ^1.4.12
+  flutter_svg: ^2.0.16
 
 
 dev_dependencies:
@@ -57,7 +59,7 @@ flutter:
   uses-material-design: true
   # To add assets to your application, add an assets section, like this:
   assets:
-    - assets/sample.pdf
+    - assets/
   #   - images/a_dot_ham.jpeg
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

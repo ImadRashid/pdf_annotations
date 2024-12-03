@@ -4,10 +4,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:open_file/open_file.dart';
-import 'package:pdf_annotations/const.dart';
-import 'package:pdf_annotations/customButton.dart';
 import 'package:pdf_render/pdf_render.dart' as pr;
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
@@ -25,19 +22,13 @@ enum Mode {
   highlight,
   text,
   erase,
-  measure,
 }
 
-const String _path =
-    "/Users/imadrashid/Library/Developer/CoreSimulator/Devices/7F6DE896-F3AC-4087-A25F-172B4F8A7F0C/data/Containers/Data/Application/0CAC396E-EE21-4867-9808-314EC4A38494/tmp/Iman's Resume.pdf";
 void main() {
   runApp(
     const MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: PdfViewerPage(
-          // filePath: _path,
-
-          ),
+      home: PdfViewerPage(),
     ),
   );
 }
@@ -274,14 +265,7 @@ class DrawingPath {
 }
 
 class PdfViewerPage extends StatefulWidget {
-  final void Function()? onCloseButtonAction;
-  final String?
-      filePath; //if file path is null it will show pick a file button at center of screen
-  const PdfViewerPage({
-    super.key,
-    this.onCloseButtonAction,
-    this.filePath,
-  });
+  const PdfViewerPage({Key? key}) : super(key: key);
 
   @override
   State<PdfViewerPage> createState() => _PdfViewerPageState();
@@ -308,7 +292,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   Color currentColor = Colors.red;
   Color currentColorHighlight = Colors.yellow.withAlpha(50);
   double currentStrokePen = 12.0;
-  double currentStrokeHighlight = 48.0;
+  double currentStrokeHighlight = 24.0;
 
   Offset _getTransformedOffset(Offset screenOffset) {
     // Remove the translation and scale to get the actual point in document space
@@ -473,9 +457,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   @override
   void initState() {
     super.initState();
-    if (widget.filePath != null) {
-      _openFileFromPath();
-    }
     textController.addListener(() {
       if (isAddingText) {
         setState(() {});
@@ -483,72 +464,216 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     });
   }
 
-// Add to dispose:
+  OverlayEntry? _overlayEntry;
+
+  void _handleTextAdd(Offset position) {
+    _overlayEntry?.remove();
+
+    final transformedPosition = _getTransformedOffset(position);
+    setState(() {
+      pendingTextPosition = transformedPosition;
+      _isEditingText = true;
+      _inlineTextController.clear();
+    });
+
+    _overlayEntry = OverlayEntry(
+      builder: (context) => Positioned(
+        left: (transformedPosition.dx * zoom) + offset.dx,
+        top: (transformedPosition.dy * zoom) + offset.dy,
+        child: Material(
+          color: Colors.transparent,
+          child: Container(
+            width: 200,
+            height: 40, // Fixed height to make it easier to tap
+            color: Colors.white70, // Make it visible
+            child: GestureDetector(
+              // Add this to ensure tap handling
+              onTap: () {
+                // Explicitly request focus and show keyboard
+                FocusScope.of(context).requestFocus(_textFocusNode);
+              },
+              child: TextField(
+                controller: _inlineTextController,
+                focusNode: _textFocusNode,
+                autofocus: true,
+                keyboardType: TextInputType.text, // Changed this
+                textInputAction: TextInputAction.done,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  border: InputBorder.none,
+                ),
+                style: const TextStyle(fontSize: 16),
+                onSubmitted: _saveText,
+                onTapOutside: (_) => _saveText(_inlineTextController.text),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    Overlay.of(context).insert(_overlayEntry!);
+
+    // Force focus and show keyboard
+    Future.delayed(const Duration(milliseconds: 100), () {
+      FocusScope.of(context).requestFocus(_textFocusNode);
+    });
+  }
+
+// Add this method to handle saving text:
+  void _saveText(String value) {
+    if (value.isNotEmpty && pendingTextPosition != null) {
+      setState(() {
+        if (!pageTextAnnotations.containsKey(currentPage)) {
+          pageTextAnnotations[currentPage] = [];
+        }
+        pageTextAnnotations[currentPage]!.add(TextAnnotation(
+          position: pendingTextPosition!,
+          text: value,
+          color: currentColor,
+          size: _calculateTextSize(value),
+        ));
+      });
+    }
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    _stopCursorBlink();
+  }
+
+// Add to setMode or wherever mode is changed:
+  void _updateMode(Mode newMode) {
+    if (mode == Mode.text && newMode != Mode.text) {
+      _overlayEntry?.remove();
+      _overlayEntry = null;
+      _stopCursorBlink();
+    }
+    setState(() {
+      mode = newMode;
+    });
+  }
+
   @override
   void dispose() {
+    _overlayEntry?.remove();
     textController.dispose();
+    _cursorBlinkTimer?.cancel();
+    _inlineTextController.dispose();
+    _textFocusNode.dispose();
     super.dispose();
   }
 
-// Add method to handle text addition:
-  void _handleTextAdd(Offset position) {
-    setState(() {
-      pendingTextPosition = position;
-      isAddingText = true;
+  void _startCursorBlink() {
+    _cursorBlinkTimer?.cancel();
+    _cursorBlinkTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      setState(() => _showCursor = !_showCursor);
     });
-
-    // Show dialog for text input
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Add Text Annotation'),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: 'Enter text...',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                pendingTextPosition = null;
-                isAddingText = false;
-                textController.clear();
-              });
-            },
-            child: Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              if (textController.text.isNotEmpty &&
-                  pendingTextPosition != null) {
-                if (!pageTextAnnotations.containsKey(currentPage)) {
-                  pageTextAnnotations[currentPage] = [];
-                }
-
-                pageTextAnnotations[currentPage]!.add(TextAnnotation(
-                  position: _getTransformedOffset(pendingTextPosition!),
-                  text: textController.text,
-                  color: currentColor,
-                ));
-
-                Navigator.pop(context);
-                setState(() {
-                  pendingTextPosition = null;
-                  isAddingText = false;
-                  textController.clear();
-                });
-              }
-            },
-            child: Text('Add'),
-          ),
-        ],
-      ),
-    );
   }
+
+  void _stopCursorBlink() {
+    _cursorBlinkTimer?.cancel();
+    setState(() {
+      _showCursor = false;
+      _isEditingText = false;
+    });
+  }
+
+  Size _calculateTextSize(String text) {
+    if (text.isEmpty) return const Size(100, 30); // Minimum size
+
+    final textSpan = TextSpan(
+      text: text,
+      style: TextStyle(fontSize: 16 * quality),
+    );
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    return Size(
+        math.max(textPainter.width / quality + 20, 100), // Add padding
+        textPainter.height / quality + 10);
+  }
+
+  bool _isEditingText = false;
+  Size _textBoxSize = Size.zero;
+// Modify _handleTextAdd:
+  // void _handleTextAdd(Offset position) {
+  //   final transformedPosition = _getTransformedOffset(position);
+  //   setState(() {
+  //     pendingTextPosition = transformedPosition;
+  //     _isEditingText = true;
+  //     _inlineTextController.clear();
+  //   });
+  //   _startCursorBlink();
+  //   _textFocusNode.requestFocus();
+  // }
+
+// // Add method to handle text addition:
+//   void _handleTextAdd(Offset position) {
+//     setState(() {
+//       pendingTextPosition = position;
+//       isAddingText = true;
+//     });
+
+//     // Show dialog for text input
+//     showDialog(
+//       context: context,
+//       builder: (context) => AlertDialog(
+//         title: Text('Add Text Annotation'),
+//         content: TextField(
+//           controller: textController,
+//           autofocus: true,
+//           decoration: InputDecoration(
+//             hintText: 'Enter text...',
+//           ),
+//         ),
+//         actions: [
+//           TextButton(
+//             onPressed: () {
+//               Navigator.pop(context);
+//               setState(() {
+//                 pendingTextPosition = null;
+//                 isAddingText = false;
+//                 textController.clear();
+//               });
+//             },
+//             child: Text('Cancel'),
+//           ),
+//           TextButton(
+//             onPressed: () {
+//               if (textController.text.isNotEmpty &&
+//                   pendingTextPosition != null) {
+//                 if (!pageTextAnnotations.containsKey(currentPage)) {
+//                   pageTextAnnotations[currentPage] = [];
+//                 }
+
+//                 pageTextAnnotations[currentPage]!.add(TextAnnotation(
+//                   position: _getTransformedOffset(pendingTextPosition!),
+//                   text: textController.text,
+//                   color: currentColor,
+//                 ));
+
+//                 Navigator.pop(context);
+//                 setState(() {
+//                   pendingTextPosition = null;
+//                   isAddingText = false;
+//                   textController.clear();
+//                 });
+//               }
+//             },
+//             child: Text('Add'),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+
+  final TextEditingController _inlineTextController = TextEditingController();
+  final FocusNode _textFocusNode = FocusNode();
+  Timer? _cursorBlinkTimer;
+  bool _showCursor = true;
 
   @override
   Widget build(BuildContext context) {
@@ -556,201 +681,160 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
       backgroundColor: Colors.white60,
       appBar: // First, add this widget below the existing action buttons in the AppBar:
           AppBar(
-        leading: InkWell(
-          onTap: widget.onCloseButtonAction,
-          child: Container(
-            padding: const EdgeInsets.only(
-              left: 20,
-            ),
-            child: SvgPicture.asset('assets/close.svg'),
-          ),
-        ),
-        centerTitle: false,
-        title: Text(mode == Mode.measure ? "Messen" : "Ausfüllen"),
         actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
-            onPressed: document != null
-                ? _exportPdf
-                : () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("You need to open a file first"),
-                      ),
-                    );
-                  },
-            child: !isExporting
-                ? const Text(
-                    "Speichern",
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontWeight: ui.FontWeight.w500,
-                      fontSize: 14,
-                      fontFamily: 'Roboto',
-                    ),
-                  )
-                : const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
+          IconButton(
+            color: mode == Mode.erase ? Colors.red : Colors.black,
+            icon: const Icon(Icons.auto_fix_high), // Using an eraser-like icon
+            onPressed: () {
+              setState(() {
+                mode = Mode.erase;
+              });
+              _updateMode(mode);
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.file_open),
+            onPressed: _pickAndLoadPdf,
+          ),
+          IconButton(
+            color: mode == Mode.pan ? Colors.red : Colors.black,
+            icon: const Icon(Icons.back_hand_outlined),
+            onPressed: () {
+              setState(() {
+                mode = Mode.pan;
+              });
+              _updateMode(mode);
+            },
+          ),
+          IconButton(
+            color: mode == Mode.draw ? Colors.red : Colors.black,
+            icon: const Icon(Icons.brush),
+            onPressed: () {
+              setState(() {
+                mode = Mode.draw;
+              });
+              _updateMode(mode);
+            },
+          ),
+          IconButton(
+            color: mode == Mode.highlight ? Colors.red : Colors.black,
+            icon: const Icon(Icons.highlight),
+            onPressed: () {
+              setState(() {
+                mode = Mode.highlight;
+              });
+              _updateMode(mode);
+            },
+          ),
+          // Add stroke width control
+          if (mode == Mode.draw)
+            SizedBox(
+              width: 150,
+              child: Row(
+                children: [
+                  const Icon(Icons.line_weight, size: 20),
+                  Expanded(
+                    child: Slider(
+                      value: currentStrokePen,
+                      min: 12.0,
+                      max: 120.0,
+                      divisions: 10,
+                      label: currentStrokePen.round().toString(),
+                      onChanged: (value) {
+                        setState(() {
+                          currentStrokePen = value;
+                        });
+                      },
                     ),
                   ),
+                ],
+              ),
+            ),
+
+          // Add highlight width control
+          if (mode == Mode.highlight)
+            SizedBox(
+              width: 150,
+              child: Row(
+                children: [
+                  const Icon(Icons.line_weight, size: 20),
+                  Expanded(
+                    child: Slider(
+                      value: currentStrokeHighlight,
+                      min: 24.0,
+                      max: 240.0,
+                      divisions: 5,
+                      label: currentStrokeHighlight.round().toString(),
+                      onChanged: (value) {
+                        setState(() {
+                          currentStrokeHighlight = value;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (mode == Mode.erase)
+            SizedBox(
+              width: 150,
+              child: Row(
+                children: [
+                  const Icon(Icons.radio_button_unchecked, size: 20),
+                  Expanded(
+                    child: Slider(
+                      value: currentEraserSize,
+                      min: 12.0,
+                      max: 120.0,
+                      divisions: 8,
+                      label: currentEraserSize.round().toString(),
+                      onChanged: (value) {
+                        setState(() {
+                          currentEraserSize = value;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          IconButton(
+            color: mode == Mode.text ? Colors.red : Colors.black,
+            icon: const Icon(Icons.text_fields),
+            onPressed: () {
+              setState(() {
+                mode = Mode.text;
+              });
+              _updateMode(mode);
+            },
           ),
-          const SizedBox(
-            width: 10,
-          )
+
+          if (!isExporting)
+            IconButton(
+              icon: const Icon(Icons.save),
+              onPressed: document != null ? _exportPdf : null,
+            )
+          else
+            const SizedBox(
+              width: 48,
+              height: 48,
+              child: Center(
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                  ),
+                ),
+              ),
+            ),
         ],
-
-        // actions: [
-        //   IconButton(
-        //     color: mode == Mode.erase ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.auto_fix_high), // Using an eraser-like icon
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.erase;
-        //       });
-        //     },
-        //   ),
-        //   IconButton(
-        //     icon: const Icon(Icons.file_open),
-        //     onPressed: _pickAndLoadPdf,
-        //   ),
-        //   IconButton(
-        //     color: mode == Mode.pan ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.back_hand_outlined),
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.pan;
-        //       });
-        //     },
-        //   ),
-        //   IconButton(
-        //     color: mode == Mode.draw ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.brush),
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.draw;
-        //       });
-        //     },
-        //   ),
-        //   IconButton(
-        //     color: mode == Mode.highlight ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.highlight),
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.highlight;
-        //       });
-        //     },
-        //   ),
-        //   // Add stroke width control
-        //   if (mode == Mode.draw)
-        //     SizedBox(
-        //       width: 150,
-        //       child: Row(
-        //         children: [
-        //           const Icon(Icons.line_weight, size: 20),
-        //           Expanded(
-        //             child: Slider(
-        //               value: currentStrokePen,
-        //               min: 12.0,
-        //               max: 120.0,
-        //               divisions: 10,
-        //               label: currentStrokePen.round().toString(),
-        //               onChanged: (value) {
-        //                 setState(() {
-        //                   currentStrokePen = value;
-        //                 });
-        //               },
-        //             ),
-        //           ),
-        //         ],
-        //       ),
-        //     ),
-
-        //   // Add highlight width control
-        //   if (mode == Mode.highlight)
-        //     SizedBox(
-        //       width: 150,
-        //       child: Row(
-        //         children: [
-        //           const Icon(Icons.line_weight, size: 20),
-        //           Expanded(
-        //             child: Slider(
-        //               value: currentStrokeHighlight,
-        //               min: 24.0,
-        //               max: 240.0,
-        //               divisions: 5,
-        //               label: currentStrokeHighlight.round().toString(),
-        //               onChanged: (value) {
-        //                 setState(() {
-        //                   currentStrokeHighlight = value;
-        //                 });
-        //               },
-        //             ),
-        //           ),
-        //         ],
-        //       ),
-        //     ),
-        //   if (mode == Mode.erase)
-        //     SizedBox(
-        //       width: 150,
-        //       child: Row(
-        //         children: [
-        //           const Icon(Icons.radio_button_unchecked, size: 20),
-        //           Expanded(
-        //             child: Slider(
-        //               value: currentEraserSize,
-        //               min: 12.0,
-        //               max: 120.0,
-        //               divisions: 8,
-        //               label: currentEraserSize.round().toString(),
-        //               onChanged: (value) {
-        //                 setState(() {
-        //                   currentEraserSize = value;
-        //                 });
-        //               },
-        //             ),
-        //           ),
-        //         ],
-        //       ),
-        //     ),
-        //   IconButton(
-        //     color: mode == Mode.text ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.text_fields),
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.text;
-        //       });
-        //     },
-        //   ),
-
-        //   if (!isExporting)
-        //     IconButton(
-        //       icon: const Icon(Icons.save),
-        //       onPressed: document != null ? _exportPdf : null,
-        //     )
-        //   else
-        //     const SizedBox(
-        //       width: 48,
-        //       height: 48,
-        //       child: Center(
-        //         child: SizedBox(
-        //           width: 24,
-        //           height: 24,
-        //           child: CircularProgressIndicator(
-        //             strokeWidth: 2,
-        //           ),
-        //         ),
-        //       ),
-        //     ),
-        // ],
       ),
-      // floatingActionButton: FloatingActionButton(
-      //   onPressed: clearCurrentPageDrawings,
-      //   child: Icon(Icons.clear),
-      //   tooltip: 'Clear Current Page',
-      // ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: clearCurrentPageDrawings,
+        child: Icon(Icons.clear),
+        tooltip: 'Clear Current Page',
+      ),
       body: Column(
         children: [
           Expanded(
@@ -961,6 +1045,12 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                         textAnnotations:
                                             currentPageTextAnnotations,
                                         quality: quality,
+                                        isEditingText: _isEditingText,
+                                        showCursor: _showCursor,
+                                        currentText: _inlineTextController.text,
+                                        pendingTextPosition:
+                                            pendingTextPosition,
+                                        textBoxSize: _textBoxSize,
                                       ),
                                       size: Size(
                                         currentPageImage!.width.toDouble(),
@@ -978,164 +1068,9 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                         ],
                       ),
           ),
-          if (document != null &&
-              (mode == Mode.draw ||
-                  mode == Mode.erase ||
-                  mode == Mode.highlight))
-            Container(
-              decoration: BoxDecoration(
-                color: backgroundColor,
-                border: Border(
-                  bottom: BorderSide(
-                    color: Colors.black26,
-                    width: 0.5,
-                  ),
-                ),
-              ),
-              child: Slider(
-                thumbColor: primaryColor,
-                activeColor: primaryColor,
-                value: mode == Mode.draw
-                    ? currentStrokePen
-                    : mode == Mode.erase
-                        ? currentEraserSize
-                        : currentStrokeHighlight,
-                min: 12.0,
-                max: mode == Mode.highlight ? 480.0 : 120.0,
-                label: mode == Mode.draw
-                    ? currentStrokePen.round().toString()
-                    : mode == Mode.erase
-                        ? currentEraserSize.round().toString()
-                        : currentStrokeHighlight.round().toString(),
-                onChanged: (value) {
-                  setState(() {
-                    if (mode == Mode.erase) {
-                      currentEraserSize = value;
-                    } else if (mode == Mode.draw) {
-                      currentStrokePen = value;
-                    } else if (mode == Mode.highlight) {
-                      currentStrokeHighlight = value;
-                    } else {}
-                  });
-                },
-              ),
-            ),
           if (document != null)
             Container(
-              color: backgroundColor,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  CustomButton(
-                    svgAsset: 'assets/draw.svg',
-                    onTap: () {
-                      setState(() {
-                        mode = Mode.draw;
-                      });
-                    },
-                    isActive: mode == Mode.draw,
-                  ),
-                  CustomButton(
-                    svgAsset: 'assets/erase.svg',
-                    onTap: () {
-                      setState(() {
-                        mode = Mode.erase;
-                      });
-                    },
-                    isActive: mode == Mode.erase,
-                  ),
-                  CustomButton(
-                    width: 20,
-                    height: 20,
-                    svgAsset: 'assets/text.svg',
-                    onTap: () {
-                      setState(() {
-                        mode = Mode.text;
-                      });
-                    },
-                    isActive: mode == Mode.text,
-                  ),
-                  CustomButton(
-                    svgAsset: 'assets/highlight.svg',
-                    onTap: () {
-                      setState(() {
-                        mode = Mode.highlight;
-                      });
-                    },
-                    isActive: mode == Mode.highlight,
-                  ),
-                  CustomButton(
-                    customIcon: const Icon(
-                      Icons.back_hand_outlined,
-                      size: 18,
-                    ),
-                    onTap: () {
-                      setState(() {
-                        mode = Mode.pan;
-                      });
-                    },
-                    isActive: mode == Mode.pan,
-                    svgAsset: '',
-                  ),
-
-                  // Add stroke width control
-                  // if (mode == Mode.draw)
-                  //   SizedBox(
-                  //     width: 150,
-                  //     child: Row(
-                  //       children: [
-                  //         const Icon(Icons.line_weight, size: 20),
-                  //         Expanded(
-                  //           child: Slider(
-                  //             value: currentStrokePen,
-                  //             min: 12.0,
-                  //             max: 120.0,
-                  //             divisions: 10,
-                  //             label: currentStrokePen.round().toString(),
-                  //             onChanged: (value) {
-                  //               setState(() {
-                  //                 currentStrokePen = value;
-                  //               });
-                  //             },
-                  //           ),
-                  //         ),
-                  //       ],
-                  //     ),
-                  //   ),
-
-                  // // Add highlight width control
-                  // if (mode == Mode.highlight)
-                  //   SizedBox(
-                  //     width: 150,
-                  //     child: Row(
-                  //       children: [
-                  //         const Icon(Icons.line_weight, size: 20),
-                  //         Expanded(
-                  //           child: Slider(
-                  //             value: currentStrokeHighlight,
-                  //             min: 24.0,
-                  //             max: 240.0,
-                  //             divisions: 5,
-                  //             label: currentStrokeHighlight.round().toString(),
-                  //             onChanged: (value) {
-                  //               setState(() {
-                  //                 currentStrokeHighlight = value;
-                  //               });
-                  //             },
-                  //           ),
-                  //         ),
-                  //       ],
-                  //     ),
-                  //   ),
-                ],
-              ),
-            ),
-          if (document != null)
-            Container(
-              padding: const EdgeInsets.only(
-                bottom: 16,
-                top: 10,
-              ),
+              padding: const EdgeInsets.all(16),
               color: Theme.of(context).colorScheme.surface,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -1381,33 +1316,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     await output.close();
   }
 
-  Future<void> _openFileFromPath() async {
-    try {
-      setState(() {
-        isLoading = true;
-        currentPage = 0;
-        currentPageImage = null;
-      });
-
-      // Since we already have the file path in widget.filePath
-      document?.dispose();
-      final file = File(widget.filePath!);
-      currentFilePath = file.path;
-
-      document = await pr.PdfDocument.openFile(file.path);
-      totalPages = document!.pageCount;
-      await _loadPage(0);
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading PDF: $e')),
-        );
-      }
-    } finally {
-      setState(() => isLoading = false);
-    }
-  }
-
   Future<void> _pickAndLoadPdf() async {
     try {
       setState(() {
@@ -1429,7 +1337,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
         totalPages = document!.pageCount;
         await _loadPage(0);
       }
-      log("[Log] Loaded PDF File: $currentFilePath");
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1532,6 +1439,13 @@ class PdfPainter extends CustomPainter {
   final List<TextAnnotation> textAnnotations;
   final double quality;
 
+  /// blinking cursor
+  final bool isEditingText;
+  final bool showCursor;
+  final String currentText;
+  final Offset? pendingTextPosition;
+  final Size textBoxSize;
+
   PdfPainter(
     this.image,
     this.zoom,
@@ -1544,6 +1458,11 @@ class PdfPainter extends CustomPainter {
     this.currentPointerPosition,
     this.textAnnotations = const [],
     this.quality = 4.0,
+    this.isEditingText = false,
+    this.showCursor = false,
+    this.currentText = '',
+    this.pendingTextPosition,
+    required this.textBoxSize,
   });
 
   @override
@@ -1648,7 +1567,69 @@ class PdfPainter extends CustomPainter {
 
       textPainter.paint(canvas, annotation.position);
     }
+    // if (isEditingText && pendingTextPosition != null) {
+    //   final boxPaint = Paint()
+    //     ..style = PaintingStyle.stroke
+    //     ..color = Colors.blue
+    //     ..strokeWidth = 1 / zoom;
 
+    //   final rect = Rect.fromLTWH(
+    //     pendingTextPosition!.dx,
+    //     pendingTextPosition!.dy,
+    //     textBoxSize.width / zoom,
+    //     textBoxSize.height / zoom,
+    //   );
+
+    //   canvas.drawRect(rect, boxPaint);
+
+    //   // Draw current text
+    //   if (currentText.isNotEmpty) {
+    //     final textSpan = TextSpan(
+    //       text: currentText,
+    //       style: TextStyle(
+    //         fontSize: 16 * quality,
+    //         color: Colors.black,
+    //       ),
+    //     );
+
+    //     final textPainter = TextPainter(
+    //       text: textSpan,
+    //       textDirection: TextDirection.ltr,
+    //     )..layout();
+
+    //     textPainter.paint(
+    //         canvas, pendingTextPosition! + Offset(5 / zoom, 5 / zoom));
+    //   }
+
+    //   // Draw cursor
+    //   if (showCursor) {
+    //     final textSpan = TextSpan(
+    //       text: currentText,
+    //       style: TextStyle(
+    //         fontSize: 16 * quality,
+    //         color: Colors.black,
+    //       ),
+    //     );
+
+    //     final textPainter = TextPainter(
+    //       text: textSpan,
+    //       textDirection: TextDirection.ltr,
+    //     )..layout();
+
+    //     final cursorOffset = Offset(
+    //       pendingTextPosition!.dx + (textPainter.width + 10) / quality,
+    //       pendingTextPosition!.dy + 5 / zoom,
+    //     );
+
+    //     canvas.drawLine(
+    //       cursorOffset,
+    //       cursorOffset + Offset(0, (textBoxSize.height - 10) / zoom),
+    //       Paint()
+    //         ..color = Colors.blue
+    //         ..strokeWidth = 2 / zoom,
+    //     );
+    //   }
+    // }
     canvas.restore();
     canvas.restore();
   }
