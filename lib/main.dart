@@ -506,10 +506,14 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                         setState(() {
                                           // Handle zooming and panning in a single setState
                                           if (details.scale != 1.0) {
-                                            // Changed the clamp range to allow higher zoom levels
                                             final newZoom =
                                                 (previousZoom * details.scale)
-                                                    .clamp(0.2 / quality, 5.0);
+                                                    .clamp(0.2 / quality, 10.0);
+
+                                            // Changed the clamp range to allow higher zoom levels
+                                            // final newZoom =
+                                            //     (previousZoom * details.scale)
+                                            //         .clamp(0.2 / quality, 5.0);
                                             final focalPoint =
                                                 details.localFocalPoint;
                                             final double zoomFactor =
@@ -637,9 +641,29 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     final double horizontalRatio = containerSize.width / imageSize.width;
     final double verticalRatio = containerSize.height / imageSize.height;
 
-    // Changed to allow the initial zoom to be larger than 1.0 if needed
-    return math.min(horizontalRatio, verticalRatio) / quality;
+    // Calculate base zoom without quality factor
+    final baseZoom = math.min(horizontalRatio, verticalRatio);
+
+    // Apply a zoom multiplier to make the content more readable
+    // while maintaining high quality rendering
+    return baseZoom * 1.2; // Adjust this multiplier as needed
   }
+
+  // double _calculateInitialZoom(BuildContext context, Size imageSize) {
+  //   if (currentPageImage == null) return 1.0;
+
+  //   final screenSize = MediaQuery.of(context).size;
+  //   final containerSize = Size(
+  //     screenSize.width,
+  //     screenSize.height - kToolbarHeight - 80,
+  //   );
+
+  //   final double horizontalRatio = containerSize.width / imageSize.width;
+  //   final double verticalRatio = containerSize.height / imageSize.height;
+
+  //   // Changed to allow the initial zoom to be larger than 1.0 if needed
+  //   return math.min(horizontalRatio, verticalRatio) / quality;
+  // }
 
   Offset _constrainOffset(Offset offset, double zoom) {
     if (currentPageImage == null) return Offset.zero;
