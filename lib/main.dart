@@ -1126,7 +1126,7 @@ void exportPdfIsolate(List<dynamic> args) async {
     // 1. PDF points to screen pixels ratio (72/96)
     // 2. Render quality (1/4)
     // 3. PDF coordinate scale
-    // 4. Additional factor of 0.5 to match screen appearance
+    // 4. Additional factor of 0.4 to match screen appearance
     final strokeScale =
         (pdfScale * (PDF_POINTS_PER_INCH / SCREEN_PPI) / renderQuality) * 0.4;
 
