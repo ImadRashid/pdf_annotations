@@ -423,6 +423,15 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                 ? const CircularProgressIndicator()
                                 : GestureDetector(
                                     onScaleStart: (details) {
+                                      if (currentPageImage == null) return;
+
+                                      final transformedOffset =
+                                          _getTransformedOffset(
+                                              details.localFocalPoint);
+                                      // Check if the point is within page bounds
+                                      if (!_isWithinPageBounds(
+                                          transformedOffset)) return;
+
                                       if (mode == Mode.erase) {
                                         setState(() {
                                           _currentPointerPosition =
@@ -431,9 +440,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                         handleErase(details.localFocalPoint);
                                       } else if (mode == Mode.draw ||
                                           mode == Mode.highlight) {
-                                        final transformedOffset =
-                                            _getTransformedOffset(
-                                                details.localFocalPoint);
                                         final baseStrokeWidth =
                                             mode == Mode.highlight
                                                 ? currentStrokeHighlight
@@ -446,13 +452,13 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                                 ..color = mode == Mode.highlight
                                                     ? currentColorHighlight
                                                     : currentColor
-                                                ..strokeWidth = baseStrokeWidth *
-                                                    zoom // Initial scaled width
+                                                ..strokeWidth =
+                                                    baseStrokeWidth * zoom
                                                 ..strokeCap = StrokeCap.round
                                                 ..strokeJoin = StrokeJoin.round
                                                 ..style = PaintingStyle.stroke
                                                 ..isAntiAlias = true,
-                                              baseStrokeWidth, // Store the base width
+                                              baseStrokeWidth,
                                             )
                                           ];
                                         });
@@ -462,6 +468,16 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                       }
                                     },
                                     onScaleUpdate: (details) {
+                                      if (currentPageImage == null) return;
+
+                                      final transformedOffset =
+                                          _getTransformedOffset(
+                                              details.localFocalPoint);
+                                      // Check if the point is within page bounds
+                                      if (!_isWithinPageBounds(
+                                              transformedOffset) &&
+                                          mode != Mode.pan) return;
+
                                       if (mode == Mode.erase &&
                                           details.scale == 1.0) {
                                         setState(() {
@@ -472,9 +488,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                       } else if ((mode == Mode.draw ||
                                               mode == Mode.highlight) &&
                                           details.scale == 1.0) {
-                                        final transformedOffset =
-                                            _getTransformedOffset(
-                                                details.localFocalPoint);
                                         if (currentPath.isEmpty ||
                                             (currentPath.last.point -
                                                         transformedOffset)
@@ -504,16 +517,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                         }
                                       } else {
                                         setState(() {
-                                          // Handle zooming and panning in a single setState
                                           if (details.scale != 1.0) {
                                             final newZoom =
                                                 (previousZoom * details.scale)
                                                     .clamp(0.2 / quality, 10.0);
-
-                                            // Changed the clamp range to allow higher zoom levels
-                                            // final newZoom =
-                                            //     (previousZoom * details.scale)
-                                            //         .clamp(0.2 / quality, 5.0);
                                             final focalPoint =
                                                 details.localFocalPoint;
                                             final double zoomFactor =
@@ -928,6 +935,18 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
       debugPrint('Error rendering page: $e');
     }
     return null;
+  }
+
+  bool _isWithinPageBounds(Offset point) {
+    if (currentPageImage == null) return false;
+
+    final pageWidth = currentPageImage!.width.toDouble();
+    final pageHeight = currentPageImage!.height.toDouble();
+
+    return point.dx >= 0 &&
+        point.dx <= pageWidth &&
+        point.dy >= 0 &&
+        point.dy <= pageHeight;
   }
 }
 
