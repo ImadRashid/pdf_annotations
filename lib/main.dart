@@ -33,6 +33,22 @@ void main() {
   );
 }
 
+class TextAnnotation {
+  final Offset position;
+  final String text;
+  final double fontSize;
+  final Color color;
+  final String fontFamily;
+
+  TextAnnotation({
+    required this.position,
+    required this.text,
+    this.fontSize = 16.0,
+    this.color = Colors.red,
+    this.fontFamily = 'Roboto',
+  });
+}
+
 class DrawingPoint {
   final Offset point;
   final Paint paint;
@@ -187,11 +203,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   double quality = 4.0;
   // String mode = 'draw';
   Mode mode = Mode.pan;
-  @override
-  void dispose() {
-    document?.dispose();
-    super.dispose();
-  }
 
   double _getAdjustedStrokeWidth(double baseWidth) {
     return baseWidth / zoom;
@@ -243,6 +254,93 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   double previousZoom = 1.0;
   Offset offset = Offset.zero;
   Offset previousOffset = Offset.zero;
+
+  Map<int, List<TextAnnotation>> pageTextAnnotations = {};
+  TextEditingController textController = TextEditingController();
+  Offset? pendingTextPosition;
+  bool isAddingText = false;
+
+  List<TextAnnotation> get currentPageTextAnnotations =>
+      pageTextAnnotations[currentPage] ?? [];
+
+// Add to initState:
+  @override
+  void initState() {
+    super.initState();
+    textController.addListener(() {
+      if (isAddingText) {
+        setState(() {});
+      }
+    });
+  }
+
+// Add to dispose:
+  @override
+  void dispose() {
+    textController.dispose();
+    super.dispose();
+  }
+
+// Add method to handle text addition:
+  void _handleTextAdd(Offset position) {
+    setState(() {
+      pendingTextPosition = position;
+      isAddingText = true;
+    });
+
+    // Show dialog for text input
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Add Text Annotation'),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: 'Enter text...',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                pendingTextPosition = null;
+                isAddingText = false;
+                textController.clear();
+              });
+            },
+            child: Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (textController.text.isNotEmpty &&
+                  pendingTextPosition != null) {
+                if (!pageTextAnnotations.containsKey(currentPage)) {
+                  pageTextAnnotations[currentPage] = [];
+                }
+
+                pageTextAnnotations[currentPage]!.add(TextAnnotation(
+                  position: _getTransformedOffset(pendingTextPosition!),
+                  text: textController.text,
+                  color: currentColor,
+                ));
+
+                Navigator.pop(context);
+                setState(() {
+                  pendingTextPosition = null;
+                  isAddingText = false;
+                  textController.clear();
+                });
+              }
+            },
+            child: Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -362,6 +460,16 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                 ],
               ),
             ),
+          IconButton(
+            color: mode == Mode.text ? Colors.red : Colors.black,
+            icon: const Icon(Icons.text_fields),
+            onPressed: () {
+              setState(() {
+                mode = Mode.text;
+              });
+            },
+          ),
+
           if (!isExporting)
             IconButton(
               icon: const Icon(Icons.save),
@@ -428,11 +536,12 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                       final transformedOffset =
                                           _getTransformedOffset(
                                               details.localFocalPoint);
-                                      // Check if the point is within page bounds
                                       if (!_isWithinPageBounds(
                                           transformedOffset)) return;
 
-                                      if (mode == Mode.erase) {
+                                      if (mode == Mode.text) {
+                                        _handleTextAdd(details.localFocalPoint);
+                                      } else if (mode == Mode.erase) {
                                         setState(() {
                                           _currentPointerPosition =
                                               details.localFocalPoint;
@@ -576,6 +685,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                         currentPointerPosition:
                                             _currentPointerPosition,
                                         eraserSize: currentEraserSize,
+                                        textAnnotations:
+                                            currentPageTextAnnotations,
                                       ),
                                       size: Size(
                                         currentPageImage!.width.toDouble(),
@@ -758,6 +869,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
         pageHeight: firstPage.height,
         originalWidth: originalWidth,
         pageCount: document!.pageCount,
+        pageTextAnnotations: pageTextAnnotations, // Add this line
       );
 
       // Get root isolate token
@@ -960,6 +1072,7 @@ class PdfPainter extends CustomPainter {
   final Offset? eraserPosition; // Add this
   final double eraserSize; // Add this
   final Offset? currentPointerPosition;
+  final List<TextAnnotation> textAnnotations;
 
   PdfPainter(
     this.image,
@@ -971,6 +1084,7 @@ class PdfPainter extends CustomPainter {
     this.eraserPosition,
     this.eraserSize = 20.0,
     this.currentPointerPosition,
+    this.textAnnotations = const [],
   });
 
   @override
@@ -1038,6 +1152,28 @@ class PdfPainter extends CustomPainter {
         eraserPaint,
       );
     }
+    // Draw text annotations
+    for (final annotation in textAnnotations) {
+      final textSpan = TextSpan(
+        text: annotation.text,
+        style: TextStyle(
+          color: annotation.color,
+          fontSize: annotation.fontSize / zoom, // Scale font size with zoom
+          fontFamily: annotation.fontFamily,
+        ),
+      );
+
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+      );
+
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        annotation.position,
+      );
+    }
 
     canvas.restore();
     canvas.restore();
@@ -1087,6 +1223,7 @@ class PdfExportData {
   final double pageHeight;
   final double originalWidth;
   final int pageCount;
+  final Map<int, List<TextAnnotation>> pageTextAnnotations;
 
   PdfExportData({
     required this.pageImages,
@@ -1096,6 +1233,7 @@ class PdfExportData {
     required this.pageHeight,
     required this.originalWidth,
     required this.pageCount,
+    required this.pageTextAnnotations,
   });
 }
 
@@ -1132,6 +1270,7 @@ void exportPdfIsolate(List<dynamic> args) async {
 
     for (int i = 0; i < data.pageCount; i++) {
       final pageDrawings = data.pageDrawings[i] ?? [];
+      final pageTexts = data.pageTextAnnotations[i] ?? [];
 
       pdf.addPage(
         pw.Page(
@@ -1214,6 +1353,32 @@ void exportPdfIsolate(List<dynamic> args) async {
                       },
                     ),
                   ),
+
+                // Add text annotations
+                // Add text annotations
+                ...pageTexts.map((annotation) {
+                  return pw.Positioned(
+                    left: annotation.position.dx * coordinateScale,
+                    top: annotation.position.dy *
+                        coordinateScale, // Remove the height subtraction
+                    child: pw.Transform.translate(
+                      offset: PdfPoint(0, 0),
+                      child: pw.Text(
+                        annotation.text,
+                        style: pw.TextStyle(
+                          color: PdfColor(
+                            annotation.color.red / 255,
+                            annotation.color.green / 255,
+                            annotation.color.blue / 255,
+                          ),
+                          fontSize: annotation.fontSize *
+                              coordinateScale *
+                              2, // Adjust size multiplier
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
               ],
             );
           },
