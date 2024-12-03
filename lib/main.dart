@@ -311,7 +311,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   double currentStrokeHighlight = 48.0;
 
   Offset _getTransformedOffset(Offset screenOffset) {
-    // Remove the translation and scale to get the actual point in document space
     return (screenOffset - offset) / zoom;
   }
 
