@@ -39,6 +39,8 @@ class TextAnnotation {
   final double fontSize;
   final Color color;
   final String fontFamily;
+  final Size size; // Add size
+  bool isSelected; // Track selection state
 
   TextAnnotation({
     required this.position,
@@ -46,7 +48,29 @@ class TextAnnotation {
     this.fontSize = 16.0,
     this.color = Colors.red,
     this.fontFamily = 'Roboto',
+    this.size = Size.zero,
+    this.isSelected = false,
   });
+
+  TextAnnotation copyWith({
+    Offset? position,
+    String? text,
+    double? fontSize,
+    Color? color,
+    String? fontFamily,
+    Size? size,
+    bool? isSelected,
+  }) {
+    return TextAnnotation(
+      position: position ?? this.position,
+      text: text ?? this.text,
+      fontSize: fontSize ?? this.fontSize,
+      color: color ?? this.color,
+      fontFamily: fontFamily ?? this.fontFamily,
+      size: size ?? this.size,
+      isSelected: isSelected ?? this.isSelected,
+    );
+  }
 }
 
 class DrawingPoint {
@@ -262,6 +286,33 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
   List<TextAnnotation> get currentPageTextAnnotations =>
       pageTextAnnotations[currentPage] ?? [];
+
+  TextAnnotation? selectedAnnotation;
+  bool isDraggingText = false;
+  bool isResizingText = false;
+  Offset? dragOffset;
+
+  void _handleTextInteraction(Offset position) {
+    final transformedPosition = _getTransformedOffset(position);
+
+    for (final annotation in pageTextAnnotations[currentPage] ?? []) {
+      final rect = Rect.fromLTWH(
+        annotation.position.dx,
+        annotation.position.dy,
+        annotation.size.width,
+        annotation.size.height,
+      );
+
+      if (rect.contains(transformedPosition)) {
+        setState(() {
+          selectedAnnotation = annotation;
+          isDraggingText = true;
+          dragOffset = transformedPosition - annotation.position;
+        });
+        return;
+      }
+    }
+  }
 
 // Add to initState:
   @override
@@ -587,7 +638,25 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                               transformedOffset) &&
                                           mode != Mode.pan) return;
 
-                                      if (mode == Mode.erase &&
+                                      if (isDraggingText &&
+                                          selectedAnnotation != null) {
+                                        final newPosition =
+                                            _getTransformedOffset(
+                                                    details.localFocalPoint) -
+                                                dragOffset!;
+                                        setState(() {
+                                          final annotations =
+                                              pageTextAnnotations[currentPage]!;
+                                          final index = annotations
+                                              .indexOf(selectedAnnotation!);
+                                          annotations[index] =
+                                              selectedAnnotation!.copyWith(
+                                                  position: newPosition);
+                                          selectedAnnotation =
+                                              annotations[index];
+                                        });
+                                        return;
+                                      } else if (mode == Mode.erase &&
                                           details.scale == 1.0) {
                                         setState(() {
                                           _currentPointerPosition =
@@ -687,6 +756,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                         eraserSize: currentEraserSize,
                                         textAnnotations:
                                             currentPageTextAnnotations,
+                                        quality: quality,
                                       ),
                                       size: Size(
                                         currentPageImage!.width.toDouble(),
@@ -1068,11 +1138,12 @@ class PdfPainter extends CustomPainter {
   final Offset offset;
   final List<DrawingPath> paths;
   final List<DrawingPoint> currentPath;
-  final Mode mode; // Add this
-  final Offset? eraserPosition; // Add this
-  final double eraserSize; // Add this
+  final Mode mode;
+  final Offset? eraserPosition;
+  final double eraserSize;
   final Offset? currentPointerPosition;
   final List<TextAnnotation> textAnnotations;
+  final double quality;
 
   PdfPainter(
     this.image,
@@ -1085,6 +1156,7 @@ class PdfPainter extends CustomPainter {
     this.eraserSize = 20.0,
     this.currentPointerPosition,
     this.textAnnotations = const [],
+    this.quality = 4.0,
   });
 
   @override
@@ -1152,13 +1224,13 @@ class PdfPainter extends CustomPainter {
         eraserPaint,
       );
     }
-    // Draw text annotations
+
     for (final annotation in textAnnotations) {
       final textSpan = TextSpan(
         text: annotation.text,
         style: TextStyle(
           color: annotation.color,
-          fontSize: annotation.fontSize / zoom, // Scale font size with zoom
+          fontSize: annotation.fontSize * quality * zoom,
           fontFamily: annotation.fontFamily,
         ),
       );
@@ -1168,11 +1240,26 @@ class PdfPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       );
 
-      textPainter.layout();
-      textPainter.paint(
-        canvas,
-        annotation.position,
-      );
+      textPainter.layout(maxWidth: size.width);
+
+      if (annotation.isSelected) {
+        final rect = Rect.fromLTWH(
+          annotation.position.dx,
+          annotation.position.dy,
+          textPainter.width,
+          textPainter.height,
+        );
+
+        canvas.drawRect(
+          rect,
+          Paint()
+            ..style = PaintingStyle.stroke
+            ..color = Colors.blue
+            ..strokeWidth = 1.0 / zoom,
+        );
+      }
+
+      textPainter.paint(canvas, annotation.position);
     }
 
     canvas.restore();
@@ -1355,12 +1442,10 @@ void exportPdfIsolate(List<dynamic> args) async {
                   ),
 
                 // Add text annotations
-                // Add text annotations
                 ...pageTexts.map((annotation) {
                   return pw.Positioned(
                     left: annotation.position.dx * coordinateScale,
-                    top: annotation.position.dy *
-                        coordinateScale, // Remove the height subtraction
+                    top: annotation.position.dy * coordinateScale,
                     child: pw.Transform.translate(
                       offset: PdfPoint(0, 0),
                       child: pw.Text(
@@ -1371,9 +1456,7 @@ void exportPdfIsolate(List<dynamic> args) async {
                             annotation.color.green / 255,
                             annotation.color.blue / 255,
                           ),
-                          fontSize: annotation.fontSize *
-                              coordinateScale *
-                              2, // Adjust size multiplier
+                          fontSize: annotation.fontSize * coordinateScale,
                         ),
                       ),
                     ),
