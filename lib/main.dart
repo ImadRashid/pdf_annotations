@@ -21,6 +21,7 @@ enum Mode {
   pan,
   highlight,
   text,
+  erase,
 }
 
 void main() {
@@ -66,7 +67,6 @@ class DrawingPath {
     if (points.length == 2) {
       path.lineTo(points[1].point.dx, points[1].point.dy);
     } else {
-      // Rest of the existing Catmull-Rom spline code remains the same
       for (int i = 0; i < points.length - 1; i++) {
         final p0 = i > 0 ? points[i - 1].point : points[i].point;
         final p1 = points[i].point;
@@ -95,6 +95,47 @@ class DrawingPath {
     }
     return path;
   }
+
+  List<DrawingPath> splitPath(Offset eraserPoint, double eraserRadius) {
+    if (points.isEmpty) return [this];
+
+    List<List<DrawingPoint>> segments = [];
+    List<DrawingPoint> currentSegment = [];
+    bool isInEraserRange = false;
+
+    for (int i = 0; i < points.length; i++) {
+      final point = points[i];
+      final distance = (point.point - eraserPoint).distance;
+      final currentPointInRange = distance <= eraserRadius;
+
+      // Start a new segment when transitioning from erased to non-erased points
+      if (currentPointInRange != isInEraserRange) {
+        if (!currentPointInRange && currentSegment.isNotEmpty) {
+          segments.add(List.from(currentSegment));
+          currentSegment = [];
+        }
+        isInEraserRange = currentPointInRange;
+      }
+
+      if (!currentPointInRange) {
+        currentSegment.add(point);
+      }
+    }
+
+    // Add the last segment if it's not empty
+    if (currentSegment.isNotEmpty) {
+      segments.add(currentSegment);
+    }
+
+    // Convert segments to DrawingPath objects
+    return segments
+        .map((segment) => DrawingPath(
+              segment,
+              paint,
+              baseStrokeWidth,
+            ))
+        .toList();
+  }
 }
 
 class PdfViewerPage extends StatefulWidget {
@@ -105,6 +146,8 @@ class PdfViewerPage extends StatefulWidget {
 }
 
 class _PdfViewerPageState extends State<PdfViewerPage> {
+  Offset? _currentPointerPosition;
+
   Map<int, List<DrawingPath>> pageDrawings = {};
   List<DrawingPoint> currentPath = [];
 
@@ -122,8 +165,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
   Color currentColor = Colors.red;
   Color currentColorHighlight = Colors.yellow.withAlpha(50);
-  double currentStrokePen = 4.0;
-  double currentStrokeHighlight = 10.0;
+  double currentStrokePen = 12.0;
+  double currentStrokeHighlight = 24.0;
 
   Offset _getTransformedOffset(Offset screenOffset) {
     // Remove the translation and scale to get the actual point in document space
@@ -141,7 +184,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
   ui.Image? currentPageImage;
   bool isPageLoading = false;
-  double quality = 3.0; // Reduced quality for better memory management
+  double quality = 4.0;
   // String mode = 'draw';
   Mode mode = Mode.pan;
   @override
@@ -152,6 +195,48 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
   double _getAdjustedStrokeWidth(double baseWidth) {
     return baseWidth / zoom;
+  }
+
+  double currentEraserSize = 20.0;
+
+  void handleErase(Offset point) {
+    final transformedPoint = _getTransformedOffset(point);
+    final eraserRadius = currentEraserSize / (2 * zoom);
+
+    if (!pageDrawings.containsKey(currentPage)) return;
+
+    bool pathsModified = false;
+    List<DrawingPath> newPaths = [];
+
+    // Process each path
+    for (var path in pageDrawings[currentPage]!) {
+      bool pathAffected = false;
+
+      // Check if path intersects with eraser
+      for (var drawPoint in path.points) {
+        if ((drawPoint.point - transformedPoint).distance <= eraserRadius) {
+          pathAffected = true;
+          break;
+        }
+      }
+
+      if (pathAffected) {
+        // Split the path and keep non-erased segments
+        final segments = path.splitPath(transformedPoint, eraserRadius);
+        newPaths.addAll(segments);
+        pathsModified = true;
+      } else {
+        newPaths.add(path);
+      }
+    }
+
+    if (pathsModified) {
+      setState(() {
+        // Only keep segments that have enough points to be visible
+        pageDrawings[currentPage] =
+            newPaths.where((path) => path.points.length > 1).toList();
+      });
+    }
   }
 
   double zoom = 1.0;
@@ -165,6 +250,15 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
       appBar: // First, add this widget below the existing action buttons in the AppBar:
           AppBar(
         actions: [
+          IconButton(
+            color: mode == Mode.erase ? Colors.red : Colors.black,
+            icon: const Icon(Icons.auto_fix_high), // Using an eraser-like icon
+            onPressed: () {
+              setState(() {
+                mode = Mode.erase;
+              });
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.file_open),
             onPressed: _pickAndLoadPdf,
@@ -206,9 +300,9 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                   Expanded(
                     child: Slider(
                       value: currentStrokePen,
-                      min: 1.0,
-                      max: 10.0,
-                      divisions: 9,
+                      min: 4.0,
+                      max: 100.0,
+                      divisions: 10,
                       label: currentStrokePen.round().toString(),
                       onChanged: (value) {
                         setState(() {
@@ -220,6 +314,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                 ],
               ),
             ),
+
           // Add highlight width control
           if (mode == Mode.highlight)
             SizedBox(
@@ -237,6 +332,29 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                       onChanged: (value) {
                         setState(() {
                           currentStrokeHighlight = value;
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (mode == Mode.erase)
+            SizedBox(
+              width: 150,
+              child: Row(
+                children: [
+                  const Icon(Icons.radio_button_unchecked, size: 20),
+                  Expanded(
+                    child: Slider(
+                      value: currentEraserSize,
+                      min: 10.0,
+                      max: 50.0,
+                      divisions: 8,
+                      label: currentEraserSize.round().toString(),
+                      onChanged: (value) {
+                        setState(() {
+                          currentEraserSize = value;
                         });
                       },
                     ),
@@ -305,7 +423,13 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                 ? const CircularProgressIndicator()
                                 : GestureDetector(
                                     onScaleStart: (details) {
-                                      if (mode == Mode.draw ||
+                                      if (mode == Mode.erase) {
+                                        setState(() {
+                                          _currentPointerPosition =
+                                              details.localFocalPoint;
+                                        });
+                                        handleErase(details.localFocalPoint);
+                                      } else if (mode == Mode.draw ||
                                           mode == Mode.highlight) {
                                         final transformedOffset =
                                             _getTransformedOffset(
@@ -338,7 +462,14 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                       }
                                     },
                                     onScaleUpdate: (details) {
-                                      if ((mode == Mode.draw ||
+                                      if (mode == Mode.erase &&
+                                          details.scale == 1.0) {
+                                        setState(() {
+                                          _currentPointerPosition =
+                                              details.localFocalPoint;
+                                        });
+                                        handleErase(details.localFocalPoint);
+                                      } else if ((mode == Mode.draw ||
                                               mode == Mode.highlight) &&
                                           details.scale == 1.0) {
                                         final transformedOffset =
@@ -402,6 +533,11 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                       }
                                     },
                                     onScaleEnd: (details) {
+                                      if (mode == Mode.erase) {
+                                        setState(() {
+                                          _currentPointerPosition = null;
+                                        });
+                                      }
                                       if ((mode == Mode.draw ||
                                               mode == Mode.highlight) &&
                                           currentPath.isNotEmpty) {
@@ -425,6 +561,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                         offset,
                                         currentPagePaths,
                                         currentPath,
+                                        mode: mode,
+                                        currentPointerPosition:
+                                            _currentPointerPosition,
+                                        eraserSize: currentEraserSize,
                                       ),
                                       size: Size(
                                         currentPageImage!.width.toDouble(),
@@ -773,13 +913,26 @@ class PdfPainter extends CustomPainter {
   final Offset offset;
   final List<DrawingPath> paths;
   final List<DrawingPoint> currentPath;
+  final Mode mode; // Add this
+  final Offset? eraserPosition; // Add this
+  final double eraserSize; // Add this
+  final Offset? currentPointerPosition;
 
-  PdfPainter(this.image, this.zoom, this.offset, this.paths, this.currentPath);
+  PdfPainter(
+    this.image,
+    this.zoom,
+    this.offset,
+    this.paths,
+    this.currentPath, {
+    this.mode = Mode.draw,
+    this.eraserPosition,
+    this.eraserSize = 20.0,
+    this.currentPointerPosition,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
-
     canvas.translate(offset.dx, offset.dy);
     canvas.scale(zoom);
 
@@ -791,10 +944,10 @@ class PdfPainter extends CustomPainter {
       filterQuality: FilterQuality.high,
     );
 
-    // Enable anti-aliasing for smoother lines
+    // Draw paths with anti-aliasing
     canvas.saveLayer(null, Paint()..isAntiAlias = true);
 
-    // Draw completed paths with scaled stroke width
+    // Draw completed paths
     for (final path in paths) {
       canvas.drawPath(
         path.createSmoothPath(zoom),
@@ -802,7 +955,7 @@ class PdfPainter extends CustomPainter {
       );
     }
 
-    // Draw current path with scaled stroke width
+    // Draw current path
     if (currentPath.isNotEmpty) {
       final currentDrawingPath = DrawingPath(
         currentPath,
@@ -812,6 +965,34 @@ class PdfPainter extends CustomPainter {
       canvas.drawPath(
         currentDrawingPath.createSmoothPath(zoom),
         currentPath.first.paint..isAntiAlias = true,
+      );
+    }
+
+    // Draw eraser preview when in erase mode
+    if (mode == Mode.erase && currentPointerPosition != null) {
+      final eraserPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..color = Colors.red
+        ..strokeWidth = 2 / zoom;
+
+      final eraserCirclePaint = Paint()
+        ..style = PaintingStyle.fill
+        ..color = Colors.red.withOpacity(0.1);
+
+      final transformedPosition = (currentPointerPosition! - offset) / zoom;
+
+      // Draw filled circle with low opacity
+      canvas.drawCircle(
+        transformedPosition,
+        eraserSize / (2 * zoom),
+        eraserCirclePaint,
+      );
+
+      // Draw circle outline
+      canvas.drawCircle(
+        transformedPosition,
+        eraserSize / (2 * zoom),
+        eraserPaint,
       );
     }
 
