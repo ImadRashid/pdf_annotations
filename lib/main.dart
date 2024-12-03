@@ -605,8 +605,9 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
         return null;
       }
 
-      return screenshot;
-      //_cropImage(screenshot);
+      return
+          //screenshot;
+          _cropImage(screenshot);
     } catch (e) {
       print("Error capturing screenshot: $e");
       return null;
@@ -622,28 +623,28 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
     }
   }
 
-  // Uint8List _cropImage(Uint8List imageBytes) {
-  //   final image = img.decodeImage(imageBytes);
-  //   if (image == null) return imageBytes;
+  Uint8List _cropImage(Uint8List imageBytes) {
+    final image = img.decodeImage(imageBytes);
+    if (image == null) return imageBytes;
 
-  //   final cropMarginLeft = 50;
-  //   final cropMarginTop = 120;
-  //   final cropMarginRight = 50;
-  //   final cropMarginBottom = 100;
+    final cropMarginLeft = 800;
+    final cropMarginRight = 800;
 
-  //   final croppedWidth = image.width - cropMarginLeft - cropMarginRight;
-  //   final croppedHeight = image.height - cropMarginTop - cropMarginBottom;
+    // Calculate the new dimensions
+    final croppedWidth = image.width - cropMarginLeft - cropMarginRight;
+    final croppedHeight = image.height;
 
-  //   final croppedImage = img.copyCrop(
-  //     image,
-  //     x: cropMarginLeft,
-  //     y: cropMarginTop,
-  //     width: croppedWidth,
-  //     height: croppedHeight,
-  //   );
+    // Crop the image
+    final croppedImage = img.copyCrop(
+      image,
+      x: cropMarginLeft,
+      y: 0,
+      width: croppedWidth,
+      height: croppedHeight,
+    );
 
-  //   return Uint8List.fromList(img.encodePng(croppedImage));
-  // }
+    return Uint8List.fromList(img.encodePng(croppedImage));
+  }
 
   bool _isLoading = false;
   Future<void> _savePdf() async {
@@ -669,8 +670,8 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
                     child: pw.Image(
                       image,
                       fit: pw.BoxFit.fill,
-                      width: _pdfImages[0].width.toDouble(),
-                      height: _pdfImages[0].height.toDouble(),
+                      // width: _pdfImages[0].width.toDouble(),
+                      // height: _pdfImages[0].height.toDouble(),
                     ),
                   );
                 },
@@ -864,11 +865,12 @@ class _PdfPageViewCanvasState extends State<PdfPageViewCanvas> {
       for (int i = 1; i <= pageCount; i++) {
         final page = await doc.getPage(i);
 
+        double scale = 3.0; // You can adjust this value as needed
         final image = await page.render(
-          width: page.width.toInt(),
-          height: page.height.toInt(),
-          fullWidth: page.width,
-          fullHeight: page.height,
+          width: (page.width * scale).toInt(),
+          height: (page.height * scale).toInt(),
+          fullWidth: page.width * scale,
+          fullHeight: page.height * scale,
         );
 
         final ui.Image renderedImage = await image.createImageDetached();
