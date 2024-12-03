@@ -19,15 +19,6 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:flutter/services.dart';
 
-enum Mode {
-  draw,
-  pan,
-  highlight,
-  text,
-  erase,
-  measure,
-}
-
 const String _path =
     "/Users/imadrashid/Library/Developer/CoreSimulator/Devices/7F6DE896-F3AC-4087-A25F-172B4F8A7F0C/data/Containers/Data/Application/0CAC396E-EE21-4867-9808-314EC4A38494/tmp/Iman's Resume.pdf";
 void main() {
@@ -42,236 +33,9 @@ void main() {
   );
 }
 
-class TextAnnotation {
-  final Offset position;
-  final String text;
-  final double fontSize;
-  final Color color;
-  final String fontFamily;
-  final Size size;
-  bool isSelected;
-  final double minWidth = 100;
-  final double minHeight = 30;
-
-  TextAnnotation({
-    required this.position,
-    required this.text,
-    this.fontSize = 16.0,
-    this.color = Colors.red,
-    this.fontFamily = 'Roboto',
-    this.size = const Size(100, 30),
-    this.isSelected = false,
-  });
-
-  Rect get bounds => Rect.fromLTWH(
-        position.dx,
-        position.dy,
-        size.width,
-        size.height,
-      );
-
-  bool containsPoint(Offset point) {
-    return bounds.contains(point);
-  }
-
-  ResizeHandle? getResizeHandle(Offset point) {
-    const handleSize = 10.0;
-
-    for (var handle in ResizeHandle.values) {
-      if (getHandleRect(handle, handleSize).contains(point)) {
-        return handle;
-      }
-    }
-    return null;
-  }
-
-  Rect getHandleRect(ResizeHandle handle, double size) {
-    switch (handle) {
-      case ResizeHandle.topLeft:
-        return Rect.fromLTWH(
-            position.dx - size / 2, position.dy - size / 2, size, size);
-      case ResizeHandle.topRight:
-        return Rect.fromLTWH(position.dx + this.size.width - size / 2,
-            position.dy - size / 2, size, size);
-      case ResizeHandle.bottomLeft:
-        return Rect.fromLTWH(position.dx - size / 2,
-            position.dy + this.size.height - size / 2, size, size);
-      case ResizeHandle.bottomRight:
-        return Rect.fromLTWH(position.dx + this.size.width - size / 2,
-            position.dy + this.size.height - size / 2, size, size);
-    }
-  }
-
-  TextAnnotation copyWith({
-    Offset? position,
-    String? text,
-    double? fontSize,
-    Color? color,
-    String? fontFamily,
-    Size? size,
-    bool? isSelected,
-  }) {
-    return TextAnnotation(
-      position: position ?? this.position,
-      text: text ?? this.text,
-      fontSize: fontSize ?? this.fontSize,
-      color: color ?? this.color,
-      fontFamily: fontFamily ?? this.fontFamily,
-      size: size ?? this.size,
-      isSelected: isSelected ?? this.isSelected,
-    );
-  }
-
-  TextAnnotation resize(ResizeHandle handle, Offset delta) {
-    double newWidth = size.width;
-    double newHeight = size.height;
-    Offset newPosition = position;
-
-    switch (handle) {
-      case ResizeHandle.topLeft:
-        newWidth = math.max(size.width - delta.dx, minWidth);
-        newHeight = math.max(size.height - delta.dy, minHeight);
-        newPosition = Offset(
-          position.dx + (size.width - newWidth),
-          position.dy + (size.height - newHeight),
-        );
-        break;
-      case ResizeHandle.topRight:
-        newWidth = math.max(size.width + delta.dx, minWidth);
-        newHeight = math.max(size.height - delta.dy, minHeight);
-        newPosition =
-            Offset(position.dx, position.dy + (size.height - newHeight));
-        break;
-      case ResizeHandle.bottomLeft:
-        newWidth = math.max(size.width - delta.dx, minWidth);
-        newHeight = math.max(size.height + delta.dy, minHeight);
-        newPosition =
-            Offset(position.dx + (size.width - newWidth), position.dy);
-        break;
-      case ResizeHandle.bottomRight:
-        newWidth = math.max(size.width + delta.dx, minWidth);
-        newHeight = math.max(size.height + delta.dy, minHeight);
-        break;
-    }
-
-    return copyWith(
-      position: newPosition,
-      size: Size(newWidth, newHeight),
-    );
-  }
-}
-
-enum ResizeHandle {
-  topLeft,
-  topRight,
-  bottomLeft,
-  bottomRight,
-}
-
-class DrawingPoint {
-  final Offset point;
-  final Paint paint;
-  final double baseStrokeWidth; // Add this field
-
-  DrawingPoint(this.point, this.paint, this.baseStrokeWidth);
-}
-
-class DrawingPath {
-  final List<DrawingPoint> points;
-  final Paint paint;
-  final double baseStrokeWidth; // Add this field
-
-  DrawingPath(this.points, this.paint, this.baseStrokeWidth);
-
-  // Update createSmoothPath to use scaled stroke width
-  Path createSmoothPath(double currentZoom) {
-    if (points.isEmpty) return Path();
-
-    // Scale the stroke width based on current zoom
-    paint.strokeWidth = baseStrokeWidth * currentZoom;
-
-    if (points.length < 2) {
-      return Path()
-        ..addOval(Rect.fromCircle(
-            center: points[0].point, radius: paint.strokeWidth / 2));
-    }
-
-    Path path = Path();
-    path.moveTo(points[0].point.dx, points[0].point.dy);
-
-    if (points.length == 2) {
-      path.lineTo(points[1].point.dx, points[1].point.dy);
-    } else {
-      for (int i = 0; i < points.length - 1; i++) {
-        final p0 = i > 0 ? points[i - 1].point : points[i].point;
-        final p1 = points[i].point;
-        final p2 = points[i + 1].point;
-        final p3 = i + 2 < points.length ? points[i + 2].point : p2;
-
-        final controlPoint1 = Offset(
-          p1.dx + (p2.dx - p0.dx) / 6,
-          p1.dy + (p2.dy - p0.dy) / 6,
-        );
-
-        final controlPoint2 = Offset(
-          p2.dx - (p3.dx - p1.dx) / 6,
-          p2.dy - (p3.dy - p1.dy) / 6,
-        );
-
-        path.cubicTo(
-          controlPoint1.dx,
-          controlPoint1.dy,
-          controlPoint2.dx,
-          controlPoint2.dy,
-          p2.dx,
-          p2.dy,
-        );
-      }
-    }
-    return path;
-  }
-
-  List<DrawingPath> splitPath(Offset eraserPoint, double eraserRadius) {
-    if (points.isEmpty) return [this];
-
-    List<List<DrawingPoint>> segments = [];
-    List<DrawingPoint> currentSegment = [];
-    bool isInEraserRange = false;
-
-    for (int i = 0; i < points.length; i++) {
-      final point = points[i];
-      final distance = (point.point - eraserPoint).distance;
-      final currentPointInRange = distance <= eraserRadius;
-
-      // Start a new segment when transitioning from erased to non-erased points
-      if (currentPointInRange != isInEraserRange) {
-        if (!currentPointInRange && currentSegment.isNotEmpty) {
-          segments.add(List.from(currentSegment));
-          currentSegment = [];
-        }
-        isInEraserRange = currentPointInRange;
-      }
-
-      if (!currentPointInRange) {
-        currentSegment.add(point);
-      }
-    }
-
-    // Add the last segment if it's not empty
-    if (currentSegment.isNotEmpty) {
-      segments.add(currentSegment);
-    }
-
-    // Convert segments to DrawingPath objects
-    return segments
-        .map((segment) => DrawingPath(
-              segment,
-              paint,
-              baseStrokeWidth,
-            ))
-        .toList();
-  }
-}
+//// HOW TO USE
+/// if you pass a file path in the argument the document will try to load that file
+/// if you don't pass any filepath it will open the screen with a button to pick a file
 
 class PdfViewerPage extends StatefulWidget {
   final void Function()? onCloseButtonAction;
@@ -1872,4 +1636,235 @@ bool _isValidCoordinate(Offset point) {
       !point.dy.isInfinite &&
       point.dx.abs() < 14400 && // PDF coordinate limit
       point.dy.abs() < 14400; // PDF coordinate limit
+}
+
+class TextAnnotation {
+  final Offset position;
+  final String text;
+  final double fontSize;
+  final Color color;
+  final String fontFamily;
+  final Size size;
+  bool isSelected;
+  final double minWidth = 100;
+  final double minHeight = 30;
+
+  TextAnnotation({
+    required this.position,
+    required this.text,
+    this.fontSize = 16.0,
+    this.color = Colors.red,
+    this.fontFamily = 'Roboto',
+    this.size = const Size(100, 30),
+    this.isSelected = false,
+  });
+
+  Rect get bounds => Rect.fromLTWH(
+        position.dx,
+        position.dy,
+        size.width,
+        size.height,
+      );
+
+  bool containsPoint(Offset point) {
+    return bounds.contains(point);
+  }
+
+  ResizeHandle? getResizeHandle(Offset point) {
+    const handleSize = 10.0;
+
+    for (var handle in ResizeHandle.values) {
+      if (getHandleRect(handle, handleSize).contains(point)) {
+        return handle;
+      }
+    }
+    return null;
+  }
+
+  Rect getHandleRect(ResizeHandle handle, double size) {
+    switch (handle) {
+      case ResizeHandle.topLeft:
+        return Rect.fromLTWH(
+            position.dx - size / 2, position.dy - size / 2, size, size);
+      case ResizeHandle.topRight:
+        return Rect.fromLTWH(position.dx + this.size.width - size / 2,
+            position.dy - size / 2, size, size);
+      case ResizeHandle.bottomLeft:
+        return Rect.fromLTWH(position.dx - size / 2,
+            position.dy + this.size.height - size / 2, size, size);
+      case ResizeHandle.bottomRight:
+        return Rect.fromLTWH(position.dx + this.size.width - size / 2,
+            position.dy + this.size.height - size / 2, size, size);
+    }
+  }
+
+  TextAnnotation copyWith({
+    Offset? position,
+    String? text,
+    double? fontSize,
+    Color? color,
+    String? fontFamily,
+    Size? size,
+    bool? isSelected,
+  }) {
+    return TextAnnotation(
+      position: position ?? this.position,
+      text: text ?? this.text,
+      fontSize: fontSize ?? this.fontSize,
+      color: color ?? this.color,
+      fontFamily: fontFamily ?? this.fontFamily,
+      size: size ?? this.size,
+      isSelected: isSelected ?? this.isSelected,
+    );
+  }
+
+  TextAnnotation resize(ResizeHandle handle, Offset delta) {
+    double newWidth = size.width;
+    double newHeight = size.height;
+    Offset newPosition = position;
+
+    switch (handle) {
+      case ResizeHandle.topLeft:
+        newWidth = math.max(size.width - delta.dx, minWidth);
+        newHeight = math.max(size.height - delta.dy, minHeight);
+        newPosition = Offset(
+          position.dx + (size.width - newWidth),
+          position.dy + (size.height - newHeight),
+        );
+        break;
+      case ResizeHandle.topRight:
+        newWidth = math.max(size.width + delta.dx, minWidth);
+        newHeight = math.max(size.height - delta.dy, minHeight);
+        newPosition =
+            Offset(position.dx, position.dy + (size.height - newHeight));
+        break;
+      case ResizeHandle.bottomLeft:
+        newWidth = math.max(size.width - delta.dx, minWidth);
+        newHeight = math.max(size.height + delta.dy, minHeight);
+        newPosition =
+            Offset(position.dx + (size.width - newWidth), position.dy);
+        break;
+      case ResizeHandle.bottomRight:
+        newWidth = math.max(size.width + delta.dx, minWidth);
+        newHeight = math.max(size.height + delta.dy, minHeight);
+        break;
+    }
+
+    return copyWith(
+      position: newPosition,
+      size: Size(newWidth, newHeight),
+    );
+  }
+}
+
+enum ResizeHandle {
+  topLeft,
+  topRight,
+  bottomLeft,
+  bottomRight,
+}
+
+class DrawingPoint {
+  final Offset point;
+  final Paint paint;
+  final double baseStrokeWidth; // Add this field
+
+  DrawingPoint(this.point, this.paint, this.baseStrokeWidth);
+}
+
+class DrawingPath {
+  final List<DrawingPoint> points;
+  final Paint paint;
+  final double baseStrokeWidth; // Add this field
+
+  DrawingPath(this.points, this.paint, this.baseStrokeWidth);
+
+  // Update createSmoothPath to use scaled stroke width
+  Path createSmoothPath(double currentZoom) {
+    if (points.isEmpty) return Path();
+
+    // Scale the stroke width based on current zoom
+    paint.strokeWidth = baseStrokeWidth * currentZoom;
+
+    if (points.length < 2) {
+      return Path()
+        ..addOval(Rect.fromCircle(
+            center: points[0].point, radius: paint.strokeWidth / 2));
+    }
+
+    Path path = Path();
+    path.moveTo(points[0].point.dx, points[0].point.dy);
+
+    if (points.length == 2) {
+      path.lineTo(points[1].point.dx, points[1].point.dy);
+    } else {
+      for (int i = 0; i < points.length - 1; i++) {
+        final p0 = i > 0 ? points[i - 1].point : points[i].point;
+        final p1 = points[i].point;
+        final p2 = points[i + 1].point;
+        final p3 = i + 2 < points.length ? points[i + 2].point : p2;
+
+        final controlPoint1 = Offset(
+          p1.dx + (p2.dx - p0.dx) / 6,
+          p1.dy + (p2.dy - p0.dy) / 6,
+        );
+
+        final controlPoint2 = Offset(
+          p2.dx - (p3.dx - p1.dx) / 6,
+          p2.dy - (p3.dy - p1.dy) / 6,
+        );
+
+        path.cubicTo(
+          controlPoint1.dx,
+          controlPoint1.dy,
+          controlPoint2.dx,
+          controlPoint2.dy,
+          p2.dx,
+          p2.dy,
+        );
+      }
+    }
+    return path;
+  }
+
+  List<DrawingPath> splitPath(Offset eraserPoint, double eraserRadius) {
+    if (points.isEmpty) return [this];
+
+    List<List<DrawingPoint>> segments = [];
+    List<DrawingPoint> currentSegment = [];
+    bool isInEraserRange = false;
+
+    for (int i = 0; i < points.length; i++) {
+      final point = points[i];
+      final distance = (point.point - eraserPoint).distance;
+      final currentPointInRange = distance <= eraserRadius;
+
+      // Start a new segment when transitioning from erased to non-erased points
+      if (currentPointInRange != isInEraserRange) {
+        if (!currentPointInRange && currentSegment.isNotEmpty) {
+          segments.add(List.from(currentSegment));
+          currentSegment = [];
+        }
+        isInEraserRange = currentPointInRange;
+      }
+
+      if (!currentPointInRange) {
+        currentSegment.add(point);
+      }
+    }
+
+    // Add the last segment if it's not empty
+    if (currentSegment.isNotEmpty) {
+      segments.add(currentSegment);
+    }
+
+    // Convert segments to DrawingPath objects
+    return segments
+        .map((segment) => DrawingPath(
+              segment,
+              paint,
+              baseStrokeWidth,
+            ))
+        .toList();
+  }
 }
