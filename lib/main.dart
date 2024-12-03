@@ -300,8 +300,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                   Expanded(
                     child: Slider(
                       value: currentStrokePen,
-                      min: 4.0,
-                      max: 100.0,
+                      min: 12.0,
+                      max: 120.0,
                       divisions: 10,
                       label: currentStrokePen.round().toString(),
                       onChanged: (value) {
@@ -325,8 +325,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                   Expanded(
                     child: Slider(
                       value: currentStrokeHighlight,
-                      min: 5.0,
-                      max: 30.0,
+                      min: 24.0,
+                      max: 240.0,
                       divisions: 5,
                       label: currentStrokeHighlight.round().toString(),
                       onChanged: (value) {
@@ -348,8 +348,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                   Expanded(
                     child: Slider(
                       value: currentEraserSize,
-                      min: 10.0,
-                      max: 50.0,
+                      min: 12.0,
+                      max: 120.0,
                       divisions: 8,
                       label: currentEraserSize.round().toString(),
                       onChanged: (value) {
@@ -1110,15 +1110,25 @@ void exportPdfIsolate(List<dynamic> args) async {
   try {
     final pdf = pw.Document();
 
-    // Calculate scale factors
-    final renderScale = 4.0; // Match the quality variable in the viewer
+    // Constants
+    const PDF_POINTS_PER_INCH = 72.0;
+    const SCREEN_PPI = 96.0;
+
+    // Basic conversion factors
+    final renderQuality = 4.0;
     final pdfScale = data.pageWidth / data.originalWidth;
 
-    // Adjust the combined scale to account for the new zoom calculations
-    final combinedScale = pdfScale / renderScale;
+    // Scale for coordinates
+    final coordinateScale = pdfScale / renderQuality;
 
-    // Adjust stroke scale to match the visual appearance
-    final strokeScale = combinedScale * 2.0; // Increased to match visual size
+    // Stroke width scaling
+    // Account for:
+    // 1. PDF points to screen pixels ratio (72/96)
+    // 2. Render quality (1/4)
+    // 3. PDF coordinate scale
+    // 4. Additional factor of 0.5 to match screen appearance
+    final strokeScale =
+        (pdfScale * (PDF_POINTS_PER_INCH / SCREEN_PPI) / renderQuality) * 0.4;
 
     for (int i = 0; i < data.pageCount; i++) {
       final pageDrawings = data.pageDrawings[i] ?? [];
@@ -1129,14 +1139,12 @@ void exportPdfIsolate(List<dynamic> args) async {
           build: (context) {
             return pw.Stack(
               children: [
-                // Base PDF page image
                 pw.Positioned.fill(
                   child: pw.Image(
                     pw.MemoryImage(data.pageImages[i]),
                     fit: pw.BoxFit.fill,
                   ),
                 ),
-                // Annotations layer
                 if (pageDrawings.isNotEmpty)
                   pw.Positioned.fill(
                     child: pw.CustomPaint(
@@ -1144,78 +1152,64 @@ void exportPdfIsolate(List<dynamic> args) async {
                         for (var drawing in pageDrawings) {
                           if (drawing.points.isEmpty) continue;
 
-                          // Convert color to PDF format with opacity
                           final color = drawing.paint.color;
-                          final r = color.red / 255;
-                          final g = color.green / 255;
-                          final b = color.blue / 255;
-                          final a = color.alpha / 255;
+                          final pdfColor = PdfColor(
+                            color.red / 255,
+                            color.green / 255,
+                            color.blue / 255,
+                          );
 
-                          final pdfColor = PdfColor(r, g, b);
                           canvas.setStrokeColor(pdfColor);
-                          canvas.setGraphicState(PdfGraphicState(opacity: a));
+                          canvas.setGraphicState(PdfGraphicState(
+                            opacity: color.alpha / 255,
+                          ));
 
-                          // Apply the adjusted stroke scale
+                          // Apply the corrected stroke width scaling
                           final strokeWidth =
                               drawing.baseStrokeWidth * strokeScale;
                           canvas.setLineWidth(strokeWidth);
                           canvas.setLineCap(PdfLineCap.round);
                           canvas.setLineJoin(PdfLineJoin.round);
 
-                          if (drawing.points.length < 2) {
-                            // Handle single point
-                            final point = drawing.points[0].point;
-                            final scaledX = point.dx * combinedScale;
-                            final scaledY =
-                                data.pageHeight - (point.dy * combinedScale);
-                            canvas
-                              ..moveTo(scaledX, scaledY)
-                              ..lineTo(scaledX + strokeWidth, scaledY)
-                              ..strokePath();
-                          } else {
-                            // Draw smooth path
-                            for (int j = 0;
-                                j < drawing.points.length - 1;
-                                j++) {
-                              final p0 = j > 0
-                                  ? drawing.points[j - 1].point
-                                  : drawing.points[j].point;
-                              final p1 = drawing.points[j].point;
-                              final p2 = drawing.points[j + 1].point;
-                              final p3 = j + 2 < drawing.points.length
-                                  ? drawing.points[j + 2].point
-                                  : p2;
+                          // Rest of the drawing code...
+                          var points = drawing.points;
+                          if (points.length < 2) continue;
 
-                              if (j == 0) {
-                                canvas.moveTo(p1.dx * combinedScale,
-                                    data.pageHeight - (p1.dy * combinedScale));
-                              }
+                          canvas.moveTo(
+                              points[0].point.dx * coordinateScale,
+                              data.pageHeight -
+                                  (points[0].point.dy * coordinateScale));
 
-                              // Calculate control points
-                              final controlPoint1 = Offset(
+                          for (int j = 0; j < points.length - 1; j++) {
+                            final p0 =
+                                j > 0 ? points[j - 1].point : points[j].point;
+                            final p1 = points[j].point;
+                            final p2 = points[j + 1].point;
+                            final p3 = j + 2 < points.length
+                                ? points[j + 2].point
+                                : p2;
+
+                            if (_isValidCoordinate(p1) &&
+                                _isValidCoordinate(p2)) {
+                              final cp1 = Offset(
                                 p1.dx + (p2.dx - p0.dx) / 6,
                                 p1.dy + (p2.dy - p0.dy) / 6,
                               );
-
-                              final controlPoint2 = Offset(
+                              final cp2 = Offset(
                                 p2.dx - (p3.dx - p1.dx) / 6,
                                 p2.dy - (p3.dy - p1.dy) / 6,
                               );
 
-                              // Draw curve
                               canvas.curveTo(
-                                controlPoint1.dx * combinedScale,
-                                data.pageHeight -
-                                    (controlPoint1.dy * combinedScale),
-                                controlPoint2.dx * combinedScale,
-                                data.pageHeight -
-                                    (controlPoint2.dy * combinedScale),
-                                p2.dx * combinedScale,
-                                data.pageHeight - (p2.dy * combinedScale),
-                              );
+                                  cp1.dx * coordinateScale,
+                                  data.pageHeight - (cp1.dy * coordinateScale),
+                                  cp2.dx * coordinateScale,
+                                  data.pageHeight - (cp2.dy * coordinateScale),
+                                  p2.dx * coordinateScale,
+                                  data.pageHeight - (p2.dy * coordinateScale));
                             }
-                            canvas.strokePath();
                           }
+                          canvas.strokePath();
                         }
                       },
                     ),
