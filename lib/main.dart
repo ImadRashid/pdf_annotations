@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:developer';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'dart:ui';
 import 'package:flutter/material.dart';
@@ -18,6 +17,8 @@ import 'dart:math' as math;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:flutter/services.dart';
+
+import 'utils.dart';
 
 const String _path =
     "/Users/imadrashid/Library/Developer/CoreSimulator/Devices/7F6DE896-F3AC-4087-A25F-172B4F8A7F0C/data/Containers/Data/Application/0CAC396E-EE21-4867-9808-314EC4A38494/tmp/Iman's Resume.pdf";
@@ -279,7 +280,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     return baseWidth / zoom;
   }
 
-// Add to initState:
   @override
   void initState() {
     super.initState();
@@ -601,6 +601,54 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
   Offset _getTransformedOffset(Offset screenOffset) {
     return (screenOffset - offset) / zoom;
+  }
+
+  Future<void> showSaveOptionsDialog(
+    BuildContext context,
+    String fileName,
+    Function(bool createCopy) onOptionSelected,
+  ) {
+    return showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Save PDF'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                  'Would you like to replace the existing file or save a copy?'),
+              const SizedBox(height: 8),
+              Text(
+                'File: $fileName',
+                style: const TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                onOptionSelected(false);
+              },
+              child: const Text('Replace'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                onOptionSelected(true);
+              },
+              child: const Text('Save Copy'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -1903,47 +1951,141 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
       final newFileName = 'annotated_${timestamp}_$originalFileName';
       final newPath = path.join(tempDir.path, newFileName);
 
-      // Create export data
-      final exportData = PdfExportData(
-        pageImages: pageImages,
-        pageDrawings: pageDrawings,
-        outputPath: newPath,
-        pageWidth: firstPage.width,
-        pageHeight: firstPage.height,
-        originalWidth: originalWidth,
-        pageCount: document!.pageCount,
-        pageTextAnnotations: pageTextAnnotations, // Add this line
-      );
+      if (widget.exportToStorage == true) {
+        final originalFileName = path.basename(currentFilePath!);
 
-      // Get root isolate token
-      final rootIsolateToken = RootIsolateToken.instance!;
+        // await showSaveOptionsDialog(
+        //   context,
+        //   originalFileName,
+        //   (createCopy) async {
+        try {
+          String targetPath;
+          // if (createCopy) {
+          //   // Generate unique path for copy in the same directory as original
+          //   targetPath = await PdfStorageHandler.generateUniqueFilePath(
+          //       currentFilePath!);
+          // } else {
+          // Use original file path for replacement
+          targetPath = currentFilePath!;
+          // }
 
-      // Create and run isolate
-      final receivePort = ReceivePort();
-      final isolate = await Isolate.spawn(
-        exportPdfIsolate,
-        [rootIsolateToken, receivePort.sendPort, exportData],
-      );
-
-      // Wait for result
-      final result = await receivePort.first;
-
-      // Clean up isolate
-      isolate.kill();
-      receivePort.close();
-
-      if (result == 'success') {
-        await OpenFile.open(newPath);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('PDF exported successfully')),
+          // Create export data with the temporary path
+          final exportData = PdfExportData(
+            pageImages: pageImages,
+            pageDrawings: pageDrawings,
+            outputPath: newPath,
+            pageWidth: firstPage.width,
+            pageHeight: firstPage.height,
+            originalWidth: originalWidth!,
+            pageCount: document!.pageCount,
+            pageTextAnnotations: pageTextAnnotations,
           );
+
+          // Get root isolate token
+          final rootIsolateToken = RootIsolateToken.instance!;
+
+          // Create and run isolate to generate PDF
+          final receivePort = ReceivePort();
+          final isolate = await Isolate.spawn(
+            exportPdfIsolate,
+            [rootIsolateToken, receivePort.sendPort, exportData],
+          );
+
+          // Wait for result
+          final result = await receivePort.first;
+
+          // Clean up isolate
+          isolate.kill();
+          receivePort.close();
+
+          if (result == 'success') {
+            try {
+              // For replacement, use the isolated replacement method
+              final resultPath = await PdfStorageHandler.replacePdfInIsolate(
+                  newPath, targetPath);
+
+              await OpenFile.open(resultPath);
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Original PDF replaced successfully'),
+                  ),
+                );
+              }
+            } catch (e) {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Error replacing file: $e')),
+                );
+              }
+            }
+          } else {
+            throw Exception(result);
+          }
+        } catch (e, st) {
+          log("$e, $st");
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Error saving PDF: $e'),
+                // duration: Duration(hours: 1),
+              ),
+            );
+          }
+        } finally {
+          // Clean up temporary file
+          try {
+            final tempFile = File(newPath);
+            if (await tempFile.exists()) {
+              await tempFile.delete();
+            }
+          } catch (e) {
+            print('Error cleaning up temporary file: $e');
+          }
         }
-      } else
-      // if (result.startsWith('error:'))
-      {
-        log(result);
-        // throw Exception(result.substring(7));
+        // },
+        // );
+      } else {
+        // Create export data
+        final exportData = PdfExportData(
+          pageImages: pageImages,
+          pageDrawings: pageDrawings,
+          outputPath: newPath,
+          pageWidth: firstPage.width,
+          pageHeight: firstPage.height,
+          originalWidth: originalWidth,
+          pageCount: document!.pageCount,
+          pageTextAnnotations: pageTextAnnotations, // Add this line
+        );
+
+        // Get root isolate token
+        final rootIsolateToken = RootIsolateToken.instance!;
+
+        // Create and run isolate
+        final receivePort = ReceivePort();
+        final isolate = await Isolate.spawn(
+          exportPdfIsolate,
+          [rootIsolateToken, receivePort.sendPort, exportData],
+        );
+
+        // Wait for result
+        final result = await receivePort.first;
+
+        // Clean up isolate
+        isolate.kill();
+        receivePort.close();
+
+        if (result == 'success') {
+          await OpenFile.open(newPath);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('PDF exported successfully')),
+            );
+          }
+        } else {
+          log(result);
+          // throw Exception(result.substring(7));
+        }
       }
     } catch (e, stackTrace) {
       debugPrint('Export error: $e');
