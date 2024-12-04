@@ -2220,8 +2220,6 @@ class PdfPainter extends CustomPainter {
     for (final path in paths) {
       if (path.pathType == Mode.measure) {
         if (path.measurementTool == MeasurementTool.scale) {
-          print("measurement tools is ${path.measurementTool}");
-
           // Create a paint for dotted dashed line
           Paint dottedDashedPaint = Paint()
             ..color = path.paint.color
@@ -2536,18 +2534,11 @@ void exportPdfIsolate(List<dynamic> args) async {
   try {
     final pdf = pw.Document();
 
-    // Constants
     const PDF_POINTS_PER_INCH = 72.0;
     const SCREEN_PPI = 96.0;
-
-    // Basic conversion factors
     final renderQuality = 4.0;
     final pdfScale = data.pageWidth / data.originalWidth;
-
-    // Scale for coordinates
     final coordinateScale = pdfScale / renderQuality;
-
-    // Stroke width scaling
     final strokeScale =
         (pdfScale * (PDF_POINTS_PER_INCH / SCREEN_PPI) / renderQuality) * 0.4;
 
@@ -2595,15 +2586,60 @@ void exportPdfIsolate(List<dynamic> args) async {
                           var points = drawing.points;
                           if (points.length < 2) continue;
 
-                          // Special handling for box paths
-                          if (drawing.pathType == Mode.box ||
-                              drawing.pathType == Mode.measure) {
-                            // Draw straight lines for boxes
+                          // Handle measurement lines with dashes
+                          if (drawing.pathType == Mode.measure) {
+                            // Set dash pattern
+                            canvas.setLineDashPattern(
+                                [10 * coordinateScale, 25 * coordinateScale]);
+
+                            // Draw single line with dash pattern
+                            canvas.moveTo(
+                                points.first.point.dx * coordinateScale,
+                                data.pageHeight -
+                                    (points.first.point.dy * coordinateScale));
+                            canvas.lineTo(
+                                points.last.point.dx * coordinateScale,
+                                data.pageHeight -
+                                    (points.last.point.dy * coordinateScale));
+                            canvas.strokePath();
+
+                            // Reset dash pattern for dots
+                            canvas.setLineDashPattern([]);
+
+                            // Draw endpoint dots (existing dot drawing code remains the same)
+                            final dotRadius = strokeWidth * 2;
+                            for (var point in [
+                              points.first.point,
+                              points.last.point
+                            ]) {
+                              final centerX = point.dx * coordinateScale;
+                              final centerY = data.pageHeight -
+                                  (point.dy * coordinateScale);
+
+                              for (var angle = 0.0;
+                                  angle < 2 * math.pi;
+                                  angle += 0.2) {
+                                final x = centerX + dotRadius * math.cos(angle);
+                                final y = centerY + dotRadius * math.sin(angle);
+
+                                if (angle == 0) {
+                                  canvas.moveTo(x, y);
+                                } else {
+                                  canvas.lineTo(x, y);
+                                }
+                              }
+                              canvas.closePath();
+                              canvas.setFillColor(pdfColor);
+                              canvas.fillPath();
+                              canvas.strokePath();
+                            }
+                          }
+                          // Handle boxes and other drawings
+                          else if (drawing.pathType == Mode.box) {
                             canvas.moveTo(
                                 points[0].point.dx * coordinateScale,
                                 data.pageHeight -
                                     (points[0].point.dy * coordinateScale));
-
                             for (int j = 1; j < points.length; j++) {
                               canvas.lineTo(
                                   points[j].point.dx * coordinateScale,
@@ -2611,13 +2647,13 @@ void exportPdfIsolate(List<dynamic> args) async {
                                       (points[j].point.dy * coordinateScale));
                             }
                             canvas.strokePath();
-                          } else {
-                            // Handle freehand drawings with curves
+                          }
+                          // Handle freehand drawings
+                          else {
                             canvas.moveTo(
                                 points[0].point.dx * coordinateScale,
                                 data.pageHeight -
                                     (points[0].point.dy * coordinateScale));
-
                             for (int j = 0; j < points.length - 1; j++) {
                               final p0 =
                                   j > 0 ? points[j - 1].point : points[j].point;
@@ -2656,8 +2692,6 @@ void exportPdfIsolate(List<dynamic> args) async {
                       },
                     ),
                   ),
-
-                // Add text annotations
                 ...pageTexts.map((annotation) {
                   return pw.Positioned(
                     left: annotation.position.dx * coordinateScale,
@@ -2694,14 +2728,8 @@ void exportPdfIsolate(List<dynamic> args) async {
   }
 }
 
-// Helper function to validate coordinates
 bool _isValidCoordinate(Offset point) {
-  return !point.dx.isNaN &&
-      !point.dx.isInfinite &&
-      !point.dy.isNaN &&
-      !point.dy.isInfinite &&
-      point.dx.abs() < 14400 && // PDF coordinate limit
-      point.dy.abs() < 14400; // PDF coordinate limit
+  return point.dx.isFinite && point.dy.isFinite;
 }
 
 class TextAnnotation {
