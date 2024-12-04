@@ -26,9 +26,8 @@ void main() {
     const MaterialApp(
       debugShowCheckedModeBanner: false,
       home: PdfViewerPage(
-          // filePath: _path,
-
-          ),
+        filePath: _path,
+      ),
     ),
   );
 }
@@ -246,71 +245,278 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     });
   }
 
+  bool isTypingText = false;
+  FocusNode textFocusNode = FocusNode();
+  OverlayEntry? textOverlay;
+  final LayerLink layerLink = LayerLink();
 // Add to dispose:
   @override
   void dispose() {
     textController.dispose();
+    textFocusNode.dispose();
+    textOverlay?.remove();
     super.dispose();
   }
 
-// Add method to handle text addition:
-  void _handleTextAdd(Offset position) {
-    setState(() {
-      pendingTextPosition = position;
-      isAddingText = true;
-    });
+  final List<double> fontSizes = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
+  double selectedFontSize = 16.0;
 
-    // Show dialog for text input
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Add Text Annotation'),
-        content: TextField(
-          controller: textController,
-          autofocus: true,
-          decoration: InputDecoration(
-            hintText: 'Enter text...',
-          ),
+  // void _handleTextAdd(Offset position) {
+  //   setState(() {
+  //     pendingTextPosition = position;
+  //     isAddingText = true;
+  //   });
+
+  //   // Show dialog for text input with font size selection
+  //   showDialog(
+  //     context: context,
+  //     builder: (context) => StatefulBuilder(
+  //       builder: (context, setDialogState) => AlertDialog(
+  //         title: const Text('Add Text'),
+  //         content: Column(
+  //           mainAxisSize: MainAxisSize.min,
+  //           children: [
+  //             TextField(
+  //               controller: textController,
+  //               autofocus: true,
+  //               decoration: const InputDecoration(
+  //                 hintText: 'Enter text...',
+  //                 border: OutlineInputBorder(),
+  //               ),
+  //               maxLines: null,
+  //               style: TextStyle(
+  //                   fontSize: selectedFontSize), // Preview font size in input
+  //             ),
+  //             const SizedBox(height: 16),
+  //             Row(
+  //               children: [
+  //                 const Text('Font Size: '),
+  //                 const SizedBox(width: 8),
+  //                 Container(
+  //                   padding: const EdgeInsets.symmetric(horizontal: 8),
+  //                   decoration: BoxDecoration(
+  //                     border: Border.all(color: Colors.grey),
+  //                     borderRadius: BorderRadius.circular(4),
+  //                   ),
+  //                   child: DropdownButton<double>(
+  //                     value: selectedFontSize,
+  //                     underline: const SizedBox(),
+  //                     items: fontSizes.map((double size) {
+  //                       return DropdownMenuItem<double>(
+  //                         value: size,
+  //                         child: Text('${size.toInt()}'),
+  //                       );
+  //                     }).toList(),
+  //                     onChanged: (double? newSize) {
+  //                       if (newSize != null) {
+  //                         setDialogState(() {
+  //                           selectedFontSize = newSize;
+  //                         });
+  //                       }
+  //                     },
+  //                   ),
+  //                 ),
+  //               ],
+  //             ),
+  //           ],
+  //         ),
+  //         actions: [
+  //           TextButton(
+  //             onPressed: () {
+  //               Navigator.pop(context);
+  //               setState(() {
+  //                 pendingTextPosition = null;
+  //                 isAddingText = false;
+  //                 textController.clear();
+  //               });
+  //             },
+  //             child: const Text('Cancel'),
+  //           ),
+  //           TextButton(
+  //             onPressed: () {
+  //               if (textController.text.isNotEmpty &&
+  //                   pendingTextPosition != null) {
+  //                 if (!pageTextAnnotations.containsKey(currentPage)) {
+  //                   pageTextAnnotations[currentPage] = [];
+  //                 }
+
+  //                 pageTextAnnotations[currentPage]!.add(TextAnnotation(
+  //                   position: _getTransformedOffset(pendingTextPosition!),
+  //                   text: textController.text,
+  //                   color: currentColor,
+  //                   fontSize: selectedFontSize,
+  //                 ));
+
+  //                 Navigator.pop(context);
+  //                 setState(() {
+  //                   pendingTextPosition = null;
+  //                   isAddingText = false;
+  //                   textController.clear();
+  //                 });
+  //               }
+  //             },
+  //             child: const Text(
+  //               'Confirm',
+  //               style: TextStyle(
+  //                 color: Colors.black,
+  //                 fontSize: 14,
+  //               ),
+  //             ),
+  //           ),
+  //         ],
+  //       ),
+  //     ),
+  //   );
+  // }
+
+// Add bottom controls for text mode
+  Widget _buildTextControls() {
+    return Container(
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        border: Border(
+          bottom: BorderSide(color: Colors.black26, width: 0.5),
         ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              setState(() {
-                pendingTextPosition = null;
-                isAddingText = false;
-                textController.clear();
-              });
-            },
-            child: Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              if (textController.text.isNotEmpty &&
-                  pendingTextPosition != null) {
-                if (!pageTextAnnotations.containsKey(currentPage)) {
-                  pageTextAnnotations[currentPage] = [];
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          // Font size dropdown
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: DropdownButton<double>(
+              value: selectedFontSize,
+              underline: const SizedBox(),
+              items: fontSizes.map((double size) {
+                return DropdownMenuItem<double>(
+                  value: size,
+                  child: Text('${size.toInt()}'),
+                );
+              }).toList(),
+              onChanged: (double? newSize) {
+                if (newSize != null) {
+                  setState(() {
+                    selectedFontSize = newSize;
+                  });
                 }
-
-                pageTextAnnotations[currentPage]!.add(TextAnnotation(
-                  position: _getTransformedOffset(pendingTextPosition!),
-                  text: textController.text,
-                  color: currentColor,
-                ));
-
-                Navigator.pop(context);
-                setState(() {
-                  pendingTextPosition = null;
-                  isAddingText = false;
-                  textController.clear();
-                });
-              }
-            },
-            child: Text('Add'),
+              },
+            ),
+          ),
+          const SizedBox(width: 16),
+          // Color picker
+          Wrap(
+            spacing: 8,
+            children: [
+              Colors.black,
+              Colors.red,
+              Colors.blue,
+              Colors.green,
+              Colors.orange,
+            ]
+                .map((color) => GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          currentColor = color;
+                        });
+                      },
+                      child: Container(
+                        width: 24,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: color,
+                          border: Border.all(
+                            color: currentColor == color
+                                ? Colors.white
+                                : Colors.grey,
+                            width: 2,
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ))
+                .toList(),
           ),
         ],
       ),
     );
+  }
+
+  void _handleTextAdd(Offset position) {
+    final transformedPosition = _getTransformedOffset(position);
+    setState(() {
+      pendingTextPosition = transformedPosition;
+      isTypingText = true;
+      textController.clear();
+    });
+
+    textOverlay?.remove();
+    textOverlay = OverlayEntry(
+      builder: (context) => Positioned(
+        left: (position.dx + offset.dx) * zoom,
+        top: (position.dy + offset.dy) * zoom,
+        child: CompositedTransformFollower(
+          link: layerLink,
+          offset: Offset(position.dx, position.dy),
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              constraints: BoxConstraints(
+                maxWidth: MediaQuery.of(context).size.width * 0.8,
+              ),
+              child: IntrinsicWidth(
+                child: TextField(
+                  focusNode: textFocusNode,
+                  controller: textController,
+                  autofocus: true,
+                  style: TextStyle(
+                    fontSize: selectedFontSize * zoom,
+                    color: currentColor,
+                  ),
+                  decoration: const InputDecoration(
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: EdgeInsets.zero,
+                  ),
+                  onSubmitted: (text) {
+                    if (text.isNotEmpty && pendingTextPosition != null) {
+                      if (!pageTextAnnotations.containsKey(currentPage)) {
+                        pageTextAnnotations[currentPage] = [];
+                      }
+
+                      // Store the base font size without zoom factor
+                      pageTextAnnotations[currentPage]!.add(TextAnnotation(
+                        position: pendingTextPosition!,
+                        text: text,
+                        color: currentColor,
+                        fontSize: selectedFontSize * zoom,
+                      ));
+                    }
+                    _finishTextInput();
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    Overlay.of(context).insert(textOverlay!);
+    textFocusNode.requestFocus();
+  }
+
+  void _finishTextInput() {
+    textOverlay?.remove();
+    textOverlay = null;
+    setState(() {
+      isTypingText = false;
+      pendingTextPosition = null;
+      textController.clear();
+    });
   }
 
   @override
@@ -365,130 +571,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
           )
         ],
 
-        // actions: [
-        //   IconButton(
-        //     color: mode == Mode.erase ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.auto_fix_high), // Using an eraser-like icon
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.erase;
-        //       });
-        //     },
-        //   ),
-        //   IconButton(
-        //     icon: const Icon(Icons.file_open),
-        //     onPressed: _pickAndLoadPdf,
-        //   ),
-        //   IconButton(
-        //     color: mode == Mode.pan ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.back_hand_outlined),
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.pan;
-        //       });
-        //     },
-        //   ),
-        //   IconButton(
-        //     color: mode == Mode.draw ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.brush),
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.draw;
-        //       });
-        //     },
-        //   ),
-        //   IconButton(
-        //     color: mode == Mode.highlight ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.highlight),
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.highlight;
-        //       });
-        //     },
-        //   ),
-        //   // Add stroke width control
-        //   if (mode == Mode.draw)
-        //     SizedBox(
-        //       width: 150,
-        //       child: Row(
-        //         children: [
-        //           const Icon(Icons.line_weight, size: 20),
-        //           Expanded(
-        //             child: Slider(
-        //               value: currentStrokePen,
-        //               min: 12.0,
-        //               max: 120.0,
-        //               divisions: 10,
-        //               label: currentStrokePen.round().toString(),
-        //               onChanged: (value) {
-        //                 setState(() {
-        //                   currentStrokePen = value;
-        //                 });
-        //               },
-        //             ),
-        //           ),
-        //         ],
-        //       ),
-        //     ),
-
-        //   // Add highlight width control
-        //   if (mode == Mode.highlight)
-        //     SizedBox(
-        //       width: 150,
-        //       child: Row(
-        //         children: [
-        //           const Icon(Icons.line_weight, size: 20),
-        //           Expanded(
-        //             child: Slider(
-        //               value: currentStrokeHighlight,
-        //               min: 24.0,
-        //               max: 240.0,
-        //               divisions: 5,
-        //               label: currentStrokeHighlight.round().toString(),
-        //               onChanged: (value) {
-        //                 setState(() {
-        //                   currentStrokeHighlight = value;
-        //                 });
-        //               },
-        //             ),
-        //           ),
-        //         ],
-        //       ),
-        //     ),
-        //   if (mode == Mode.erase)
-        //     SizedBox(
-        //       width: 150,
-        //       child: Row(
-        //         children: [
-        //           const Icon(Icons.radio_button_unchecked, size: 20),
-        //           Expanded(
-        //             child: Slider(
-        //               value: currentEraserSize,
-        //               min: 12.0,
-        //               max: 120.0,
-        //               divisions: 8,
-        //               label: currentEraserSize.round().toString(),
-        //               onChanged: (value) {
-        //                 setState(() {
-        //                   currentEraserSize = value;
-        //                 });
-        //               },
-        //             ),
-        //           ),
-        //         ],
-        //       ),
-        //     ),
-        //   IconButton(
-        //     color: mode == Mode.text ? Colors.red : Colors.black,
-        //     icon: const Icon(Icons.text_fields),
-        //     onPressed: () {
-        //       setState(() {
-        //         mode = Mode.text;
-        //       });
-        //     },
-        //   ),
-
-        //   if (!isExporting)
         //     IconButton(
         //       icon: const Icon(Icons.save),
         //       onPressed: document != null ? _exportPdf : null,
@@ -509,11 +591,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
         //     ),
         // ],
       ),
-      // floatingActionButton: FloatingActionButton(
-      //   onPressed: clearCurrentPageDrawings,
-      //   child: Icon(Icons.clear),
-      //   tooltip: 'Clear Current Page',
-      // ),
       body: Column(
         children: [
           Expanded(
@@ -544,193 +621,204 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                       )
                     : Stack(
                         children: [
-                          Center(
-                            child: currentPageImage == null
-                                ? const CircularProgressIndicator()
-                                : GestureDetector(
-                                    onScaleStart: (details) {
-                                      if (currentPageImage == null) return;
+                          CompositedTransformTarget(
+                            link: layerLink,
+                            child: Center(
+                              child: currentPageImage == null
+                                  ? const CircularProgressIndicator()
+                                  : GestureDetector(
+                                      onScaleStart: (details) {
+                                        if (currentPageImage == null) return;
 
-                                      final transformedOffset =
-                                          _getTransformedOffset(
-                                              details.localFocalPoint);
-                                      if (!_isWithinPageBounds(
-                                          transformedOffset)) return;
-
-                                      if (mode == Mode.text) {
-                                        _handleTextAdd(details.localFocalPoint);
-                                      } else if (mode == Mode.erase) {
-                                        setState(() {
-                                          _currentPointerPosition =
-                                              details.localFocalPoint;
-                                        });
-                                        handleErase(details.localFocalPoint);
-                                      } else if (mode == Mode.draw ||
-                                          mode == Mode.highlight) {
-                                        final baseStrokeWidth =
-                                            mode == Mode.highlight
-                                                ? currentStrokeHighlight
-                                                : currentStrokePen;
-                                        setState(() {
-                                          currentPath = [
-                                            DrawingPoint(
-                                              transformedOffset,
-                                              Paint()
-                                                ..color = mode == Mode.highlight
-                                                    ? currentColorHighlight
-                                                    : currentColor
-                                                ..strokeWidth =
-                                                    baseStrokeWidth * zoom
-                                                ..strokeCap = StrokeCap.round
-                                                ..strokeJoin = StrokeJoin.round
-                                                ..style = PaintingStyle.stroke
-                                                ..isAntiAlias = true,
-                                              baseStrokeWidth,
-                                            )
-                                          ];
-                                        });
-                                      } else {
-                                        previousZoom = zoom;
-                                        previousOffset = offset;
-                                      }
-                                    },
-                                    onScaleUpdate: (details) {
-                                      if (currentPageImage == null) return;
-
-                                      final transformedOffset =
-                                          _getTransformedOffset(
-                                              details.localFocalPoint);
-                                      // Check if the point is within page bounds
-                                      if (!_isWithinPageBounds(
-                                              transformedOffset) &&
-                                          mode != Mode.pan) return;
-
-                                      if (isDraggingText &&
-                                          selectedAnnotation != null) {
-                                        final newPosition =
+                                        final transformedOffset =
                                             _getTransformedOffset(
-                                                    details.localFocalPoint) -
-                                                dragOffset!;
-                                        setState(() {
-                                          final annotations =
-                                              pageTextAnnotations[currentPage]!;
-                                          final index = annotations
-                                              .indexOf(selectedAnnotation!);
-                                          annotations[index] =
-                                              selectedAnnotation!.copyWith(
-                                                  position: newPosition);
-                                          selectedAnnotation =
-                                              annotations[index];
-                                        });
-                                        return;
-                                      } else if (mode == Mode.erase &&
-                                          details.scale == 1.0) {
-                                        setState(() {
-                                          _currentPointerPosition =
-                                              details.localFocalPoint;
-                                        });
-                                        handleErase(details.localFocalPoint);
-                                      } else if ((mode == Mode.draw ||
-                                              mode == Mode.highlight) &&
-                                          details.scale == 1.0) {
-                                        if (currentPath.isEmpty ||
-                                            (currentPath.last.point -
-                                                        transformedOffset)
-                                                    .distance >
-                                                1.0 / zoom) {
+                                                details.localFocalPoint);
+                                        if (!_isWithinPageBounds(
+                                            transformedOffset)) return;
+
+                                        if (mode == Mode.text) {
+                                          _handleTextAdd(
+                                              details.localFocalPoint);
+                                        } else if (mode == Mode.erase) {
+                                          setState(() {
+                                            _currentPointerPosition =
+                                                details.localFocalPoint;
+                                          });
+                                          handleErase(details.localFocalPoint);
+                                        } else if (mode == Mode.draw ||
+                                            mode == Mode.highlight) {
                                           final baseStrokeWidth =
                                               mode == Mode.highlight
                                                   ? currentStrokeHighlight
                                                   : currentStrokePen;
-                                          currentPath.add(
-                                            DrawingPoint(
-                                              transformedOffset,
-                                              Paint()
-                                                ..color = mode == Mode.highlight
-                                                    ? currentColorHighlight
-                                                    : currentColor
-                                                ..strokeWidth =
-                                                    baseStrokeWidth * zoom
-                                                ..strokeCap = StrokeCap.round
-                                                ..strokeJoin = StrokeJoin.round
-                                                ..style = PaintingStyle.stroke
-                                                ..isAntiAlias = true,
-                                              baseStrokeWidth,
-                                            ),
-                                          );
-                                          setState(() {});
+                                          setState(() {
+                                            currentPath = [
+                                              DrawingPoint(
+                                                transformedOffset,
+                                                Paint()
+                                                  ..color = mode ==
+                                                          Mode.highlight
+                                                      ? currentColorHighlight
+                                                      : currentColor
+                                                  ..strokeWidth =
+                                                      baseStrokeWidth * zoom
+                                                  ..strokeCap = StrokeCap.round
+                                                  ..strokeJoin =
+                                                      StrokeJoin.round
+                                                  ..style = PaintingStyle.stroke
+                                                  ..isAntiAlias = true,
+                                                baseStrokeWidth,
+                                              )
+                                            ];
+                                          });
+                                        } else {
+                                          previousZoom = zoom;
+                                          previousOffset = offset;
                                         }
-                                      } else {
-                                        setState(() {
-                                          if (details.scale != 1.0) {
-                                            final newZoom =
-                                                (previousZoom * details.scale)
-                                                    .clamp(0.2 / quality, 10.0);
-                                            final focalPoint =
+                                      },
+                                      onScaleUpdate: (details) {
+                                        if (currentPageImage == null) return;
+
+                                        final transformedOffset =
+                                            _getTransformedOffset(
+                                                details.localFocalPoint);
+                                        // Check if the point is within page bounds
+                                        if (!_isWithinPageBounds(
+                                                transformedOffset) &&
+                                            mode != Mode.pan) return;
+
+                                        if (isDraggingText &&
+                                            selectedAnnotation != null) {
+                                          final newPosition =
+                                              _getTransformedOffset(
+                                                      details.localFocalPoint) -
+                                                  dragOffset!;
+                                          setState(() {
+                                            final annotations =
+                                                pageTextAnnotations[
+                                                    currentPage]!;
+                                            final index = annotations
+                                                .indexOf(selectedAnnotation!);
+                                            annotations[index] =
+                                                selectedAnnotation!.copyWith(
+                                                    position: newPosition);
+                                            selectedAnnotation =
+                                                annotations[index];
+                                          });
+                                          return;
+                                        } else if (mode == Mode.erase &&
+                                            details.scale == 1.0) {
+                                          setState(() {
+                                            _currentPointerPosition =
                                                 details.localFocalPoint;
-                                            final double zoomFactor =
-                                                newZoom / zoom;
-                                            final Offset normalizedOffset =
-                                                offset - focalPoint;
-                                            final Offset scaledOffset =
-                                                normalizedOffset * zoomFactor;
-                                            final Offset offsetDelta =
-                                                scaledOffset - normalizedOffset;
-                                            zoom = newZoom;
-                                            offset = _constrainOffset(
-                                                offset + offsetDelta, newZoom);
-                                          } else {
-                                            offset = _constrainOffset(
-                                                offset +
-                                                    details.focalPointDelta,
-                                                zoom);
+                                          });
+                                          handleErase(details.localFocalPoint);
+                                        } else if ((mode == Mode.draw ||
+                                                mode == Mode.highlight) &&
+                                            details.scale == 1.0) {
+                                          if (currentPath.isEmpty ||
+                                              (currentPath.last.point -
+                                                          transformedOffset)
+                                                      .distance >
+                                                  1.0 / zoom) {
+                                            final baseStrokeWidth =
+                                                mode == Mode.highlight
+                                                    ? currentStrokeHighlight
+                                                    : currentStrokePen;
+                                            currentPath.add(
+                                              DrawingPoint(
+                                                transformedOffset,
+                                                Paint()
+                                                  ..color = mode ==
+                                                          Mode.highlight
+                                                      ? currentColorHighlight
+                                                      : currentColor
+                                                  ..strokeWidth =
+                                                      baseStrokeWidth * zoom
+                                                  ..strokeCap = StrokeCap.round
+                                                  ..strokeJoin =
+                                                      StrokeJoin.round
+                                                  ..style = PaintingStyle.stroke
+                                                  ..isAntiAlias = true,
+                                                baseStrokeWidth,
+                                              ),
+                                            );
+                                            setState(() {});
                                           }
-                                        });
-                                      }
-                                    },
-                                    onScaleEnd: (details) {
-                                      if (mode == Mode.erase) {
-                                        setState(() {
-                                          _currentPointerPosition = null;
-                                        });
-                                      }
-                                      if ((mode == Mode.draw ||
-                                              mode == Mode.highlight) &&
-                                          currentPath.isNotEmpty) {
-                                        setState(() {
-                                          addPathToCurrentPage(DrawingPath(
-                                            List.from(currentPath),
-                                            currentPath.first.paint,
-                                            currentPath.first.baseStrokeWidth,
-                                          ));
-                                          currentPath = [];
-                                        });
-                                      } else {
-                                        previousZoom = zoom;
-                                        previousOffset = offset;
-                                      }
-                                    },
-                                    child: CustomPaint(
-                                      painter: PdfPainter(
-                                        currentPageImage!,
-                                        zoom,
-                                        offset,
-                                        currentPagePaths,
-                                        currentPath,
-                                        mode: mode,
-                                        currentPointerPosition:
-                                            _currentPointerPosition,
-                                        eraserSize: currentEraserSize,
-                                        textAnnotations:
-                                            currentPageTextAnnotations,
-                                        quality: quality,
-                                      ),
-                                      size: Size(
-                                        currentPageImage!.width.toDouble(),
-                                        currentPageImage!.height.toDouble(),
+                                        } else {
+                                          setState(() {
+                                            if (details.scale != 1.0) {
+                                              final newZoom = (previousZoom *
+                                                      details.scale)
+                                                  .clamp(0.2 / quality, 10.0);
+                                              final focalPoint =
+                                                  details.localFocalPoint;
+                                              final double zoomFactor =
+                                                  newZoom / zoom;
+                                              final Offset normalizedOffset =
+                                                  offset - focalPoint;
+                                              final Offset scaledOffset =
+                                                  normalizedOffset * zoomFactor;
+                                              final Offset offsetDelta =
+                                                  scaledOffset -
+                                                      normalizedOffset;
+                                              zoom = newZoom;
+                                              offset = _constrainOffset(
+                                                  offset + offsetDelta,
+                                                  newZoom);
+                                            } else {
+                                              offset = _constrainOffset(
+                                                  offset +
+                                                      details.focalPointDelta,
+                                                  zoom);
+                                            }
+                                          });
+                                        }
+                                      },
+                                      onScaleEnd: (details) {
+                                        if (mode == Mode.erase) {
+                                          setState(() {
+                                            _currentPointerPosition = null;
+                                          });
+                                        }
+                                        if ((mode == Mode.draw ||
+                                                mode == Mode.highlight) &&
+                                            currentPath.isNotEmpty) {
+                                          setState(() {
+                                            addPathToCurrentPage(DrawingPath(
+                                              List.from(currentPath),
+                                              currentPath.first.paint,
+                                              currentPath.first.baseStrokeWidth,
+                                            ));
+                                            currentPath = [];
+                                          });
+                                        } else {
+                                          previousZoom = zoom;
+                                          previousOffset = offset;
+                                        }
+                                      },
+                                      child: CustomPaint(
+                                        painter: PdfPainter(
+                                          currentPageImage!,
+                                          zoom,
+                                          offset,
+                                          currentPagePaths,
+                                          currentPath,
+                                          mode: mode,
+                                          currentPointerPosition:
+                                              _currentPointerPosition,
+                                          eraserSize: currentEraserSize,
+                                          textAnnotations:
+                                              currentPageTextAnnotations,
+                                          quality: quality,
+                                        ),
+                                        size: Size(
+                                          currentPageImage!.width.toDouble(),
+                                          currentPageImage!.height.toDouble(),
+                                        ),
                                       ),
                                     ),
-                                  ),
+                            ),
                           ),
                           if (isPageLoading)
                             const Positioned.fill(
@@ -741,12 +829,13 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                         ],
                       ),
           ),
+          if (mode == Mode.text) _buildTextControls(),
           if (document != null &&
               (mode == Mode.draw ||
                   mode == Mode.erase ||
                   mode == Mode.highlight))
             Container(
-              decoration: BoxDecoration(
+              decoration: const BoxDecoration(
                 color: backgroundColor,
                 border: Border(
                   bottom: BorderSide(
@@ -840,56 +929,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                     isActive: mode == Mode.pan,
                     svgAsset: '',
                   ),
-
-                  // Add stroke width control
-                  // if (mode == Mode.draw)
-                  //   SizedBox(
-                  //     width: 150,
-                  //     child: Row(
-                  //       children: [
-                  //         const Icon(Icons.line_weight, size: 20),
-                  //         Expanded(
-                  //           child: Slider(
-                  //             value: currentStrokePen,
-                  //             min: 12.0,
-                  //             max: 120.0,
-                  //             divisions: 10,
-                  //             label: currentStrokePen.round().toString(),
-                  //             onChanged: (value) {
-                  //               setState(() {
-                  //                 currentStrokePen = value;
-                  //               });
-                  //             },
-                  //           ),
-                  //         ),
-                  //       ],
-                  //     ),
-                  //   ),
-
-                  // // Add highlight width control
-                  // if (mode == Mode.highlight)
-                  //   SizedBox(
-                  //     width: 150,
-                  //     child: Row(
-                  //       children: [
-                  //         const Icon(Icons.line_weight, size: 20),
-                  //         Expanded(
-                  //           child: Slider(
-                  //             value: currentStrokeHighlight,
-                  //             min: 24.0,
-                  //             max: 240.0,
-                  //             divisions: 5,
-                  //             label: currentStrokeHighlight.round().toString(),
-                  //             onChanged: (value) {
-                  //               setState(() {
-                  //                 currentStrokeHighlight = value;
-                  //               });
-                  //             },
-                  //           ),
-                  //         ),
-                  //       ],
-                  //     ),
-                  //   ),
                 ],
               ),
             ),
@@ -1311,6 +1350,9 @@ class PdfPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final Rect clipRect = Offset.zero & size;
+    canvas.clipRect(clipRect);
+
     canvas.save();
     canvas.translate(offset.dx, offset.dy);
     canvas.scale(zoom);
@@ -1375,12 +1417,13 @@ class PdfPainter extends CustomPainter {
       );
     }
 
+    // Draw text annotations with proper scaling and clipping
     for (final annotation in textAnnotations) {
       final textSpan = TextSpan(
         text: annotation.text,
         style: TextStyle(
           color: annotation.color,
-          fontSize: annotation.fontSize * quality * zoom,
+          fontSize: annotation.fontSize,
           fontFamily: annotation.fontFamily,
         ),
       );
@@ -1388,16 +1431,22 @@ class PdfPainter extends CustomPainter {
       final textPainter = TextPainter(
         text: textSpan,
         textDirection: TextDirection.ltr,
+        textAlign: TextAlign.left,
+        maxLines: 1, // Prevent text wrapping
       );
 
-      textPainter.layout(maxWidth: size.width);
+      // Layout with unlimited width to prevent wrapping
+      textPainter.layout(minWidth: 0, maxWidth: double.infinity);
+
+      // Calculate the actual position in canvas coordinates
+      final position = annotation.position;
 
       if (annotation.isSelected) {
         final rect = Rect.fromLTWH(
-          annotation.position.dx,
-          annotation.position.dy,
-          textPainter.width,
-          textPainter.height,
+          position.dx,
+          position.dy,
+          textPainter.width / quality,
+          textPainter.height / quality,
         );
 
         canvas.drawRect(
@@ -1409,7 +1458,22 @@ class PdfPainter extends CustomPainter {
         );
       }
 
-      textPainter.paint(canvas, annotation.position);
+      // Save canvas state before applying clip
+      canvas.save();
+
+      // Create a clip rect for the text bounds
+      final textBounds = Rect.fromLTWH(
+        position.dx,
+        position.dy,
+        textPainter.width / quality,
+        textPainter.height / quality,
+      );
+
+      // Paint the text
+      textPainter.paint(canvas, position);
+
+      // Restore canvas state
+      canvas.restore();
     }
 
     canvas.restore();
