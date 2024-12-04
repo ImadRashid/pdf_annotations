@@ -59,6 +59,17 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
   Map<int, List<DrawingPath>> pageDrawings = {};
   List<DrawingPoint> currentPath = [];
+  Color currentMeasurementColor = Colors.blue;
+  double currentMeasurementStroke = 3.0;
+
+  Map<int, DrawingPath?> pageReferenceLines = {};
+  Map<int, TextAnnotation?> pageReferenceTexts = {};
+  Map<int, double?> pagePixelsPerMeter = {};
+  Map<int, double?> pageLineLengths = {};
+  DrawingPath? get referenceLine => pageReferenceLines[currentPage];
+  TextAnnotation? get referenceText => pageReferenceTexts[currentPage];
+  double? get pixelsPerMeter => pagePixelsPerMeter[currentPage];
+  double? get lineLength => pageLineLengths[currentPage];
 
   // Helper methods to manage page-specific drawings
   List<DrawingPath> get currentPagePaths => pageDrawings[currentPage] ?? [];
@@ -78,7 +89,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   bool isLoading = false;
   int currentPage = 0;
   int totalPages = 0;
-
+  Offset? lineStart;
   ui.Image? currentPageImage;
   bool isPageLoading = false;
   double quality = 4.0;
@@ -98,12 +109,18 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   double previousZoom = 1.0;
   Offset offset = Offset.zero;
   Offset previousOffset = Offset.zero;
+  double? initialLineLength;
 
   Map<int, List<TextAnnotation>> pageTextAnnotations = {};
   TextEditingController textController = TextEditingController();
   Offset? pendingTextPosition;
   bool isAddingText = false;
-
+  DrawingPath? referenceBox; // Store reference box
+  TextAnnotation? referenceBoxText; // Store reference box measurement text
+  double? boxArea; // Store box area
+  double? pixelsPerSquareMeter; // For area calculations
+  Offset? boxStart; // For drawing the box
+  Rect? currentBox;
   List<TextAnnotation> get currentPageTextAnnotations =>
       pageTextAnnotations[currentPage] ?? [];
 
@@ -112,6 +129,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   bool isResizingText = false;
   Offset? dragOffset;
   bool _canUndoScale = false;
+  final _referenceFocusNode = FocusNode();
+  MeasurementTool measurementTool = MeasurementTool.none;
+  TextEditingController _referenceController = TextEditingController();
+
   void _handleTextInteraction(Offset position) {
     final transformedPosition = _getTransformedOffset(position);
 
@@ -137,7 +158,17 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   void handleErase(Offset point) {
     final transformedPoint = _getTransformedOffset(point);
     final eraserRadius = currentEraserSize / (2 * zoom);
+    bool modified = false;
 
+    // Store old states before modification
+    final oldDrawings = pageDrawings[currentPage] != null
+        ? List<DrawingPath>.from(pageDrawings[currentPage]!)
+        : null;
+    final oldTexts = pageTextAnnotations[currentPage] != null
+        ? List<TextAnnotation>.from(pageTextAnnotations[currentPage]!)
+        : null;
+
+    // Handle text annotations
     if (pageTextAnnotations.containsKey(currentPage)) {
       bool textRemoved = false;
       List<TextAnnotation> remainingAnnotations = [];
@@ -156,7 +187,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
           textDirection: TextDirection.ltr,
         )..layout();
 
-        // Get text bounds
         final textBounds = Rect.fromLTWH(
           annotation.position.dx,
           annotation.position.dy,
@@ -164,19 +194,18 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
           textPainter.height / quality,
         );
 
-        // Check if eraser point is within text bounds + eraser radius
         final eraserBounds = Rect.fromCircle(
           center: transformedPoint,
           radius: eraserRadius,
         );
 
-        // Keep text only if there's no intersection
         if (!textBounds.overlaps(eraserBounds) &&
             !textBounds.contains(transformedPoint) &&
             !eraserBounds.contains(textBounds.center)) {
           remainingAnnotations.add(annotation);
         } else {
           textRemoved = true;
+          modified = true;
         }
       }
 
@@ -191,39 +220,54 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
       }
     }
 
-    if (!pageDrawings.containsKey(currentPage)) return;
+    // Handle drawings
+    if (pageDrawings.containsKey(currentPage)) {
+      bool pathsModified = false;
+      List<DrawingPath> newPaths = [];
 
-    bool pathsModified = false;
-    List<DrawingPath> newPaths = [];
+      for (var path in pageDrawings[currentPage]!) {
+        bool pathAffected = false;
 
-    // Process each path
-    for (var path in pageDrawings[currentPage]!) {
-      bool pathAffected = false;
+        for (var drawPoint in path.points) {
+          if ((drawPoint.point - transformedPoint).distance <= eraserRadius) {
+            pathAffected = true;
+            modified = true;
+            break;
+          }
+        }
 
-      // Check if path intersects with eraser
-      for (var drawPoint in path.points) {
-        if ((drawPoint.point - transformedPoint).distance <= eraserRadius) {
-          pathAffected = true;
-          break;
+        if (pathAffected) {
+          final segments = path.splitPath(transformedPoint, eraserRadius);
+          newPaths.addAll(segments);
+          pathsModified = true;
+        } else {
+          newPaths.add(path);
         }
       }
 
-      if (pathAffected) {
-        // Split the path and keep non-erased segments
-        final segments = path.splitPath(transformedPoint, eraserRadius);
-        newPaths.addAll(segments);
-        pathsModified = true;
-      } else {
-        newPaths.add(path);
+      if (pathsModified) {
+        setState(() {
+          pageDrawings[currentPage] =
+              newPaths.where((path) => path.points.length > 1).toList();
+        });
       }
     }
 
-    if (pathsModified) {
-      setState(() {
-        // Only keep segments that have enough points to be visible
-        pageDrawings[currentPage] =
-            newPaths.where((path) => path.points.length > 1).toList();
-      });
+    // Add to history if any changes were made
+    if (modified) {
+      addToHistory(AnnotationAction(
+        type: ActionType.erase,
+        pageNumber: currentPage,
+        oldState: {
+          'drawings': oldDrawings,
+          'texts': oldTexts,
+        },
+        newState: {
+          'drawings': List<DrawingPath>.from(pageDrawings[currentPage] ?? []),
+          'texts':
+              List<TextAnnotation>.from(pageTextAnnotations[currentPage] ?? []),
+        },
+      ));
     }
   }
 
@@ -251,6 +295,135 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     textFocusNode.dispose();
     textOverlay?.remove();
     super.dispose();
+  }
+
+  List<AnnotationAction> undoStack = [];
+  List<AnnotationAction> redoStack = [];
+  static const int maxHistorySize =
+      50; // Limit stack size to prevent memory issues
+
+  void addToHistory(AnnotationAction action) {
+    undoStack.add(action);
+    if (undoStack.length > maxHistorySize) {
+      undoStack.removeAt(0);
+    }
+    // Clear redo stack when new action is performed
+    redoStack.clear();
+    // Update UI to reflect undo/redo availability
+    setState(() {});
+  }
+
+  void undo() {
+    if (undoStack.isEmpty) return;
+
+    final action = undoStack.removeLast();
+    redoStack.add(action);
+
+    setState(() {
+      switch (action.type) {
+        case ActionType.draw:
+          // Restore previous state of drawings
+          if (action.oldState != null) {
+            pageDrawings[action.pageNumber] =
+                List<DrawingPath>.from(action.oldState);
+          } else {
+            pageDrawings[action.pageNumber]?.removeLast();
+          }
+          break;
+
+        case ActionType.erase:
+          // Restore erased paths
+          if (action.oldState != null) {
+            pageDrawings[action.pageNumber] =
+                List<DrawingPath>.from(action.oldState);
+          }
+          break;
+
+        case ActionType.text:
+          // Remove added text or restore modified text
+          if (action.oldState != null) {
+            pageTextAnnotations[action.pageNumber] =
+                List<TextAnnotation>.from(action.oldState);
+          } else {
+            pageTextAnnotations[action.pageNumber]?.removeLast();
+          }
+          break;
+
+        case ActionType.measure:
+        case ActionType.box:
+          // Remove measurement or restore previous state
+          if (action.oldState != null) {
+            pageDrawings[action.pageNumber] =
+                List<DrawingPath>.from(action.oldState);
+            pageTextAnnotations[action.pageNumber] =
+                List<TextAnnotation>.from(action.oldState);
+          } else {
+            pageDrawings[action.pageNumber]?.removeLast();
+            // Remove associated measurement text
+            if (pageTextAnnotations[action.pageNumber]?.isNotEmpty ?? false) {
+              pageTextAnnotations[action.pageNumber]?.removeLast();
+            }
+          }
+          break;
+      }
+    });
+  }
+
+  void redo() {
+    if (redoStack.isEmpty) return;
+
+    final action = redoStack.removeLast();
+    undoStack.add(action);
+
+    setState(() {
+      switch (action.type) {
+        case ActionType.draw:
+          // Restore the drawing
+          if (!pageDrawings.containsKey(action.pageNumber)) {
+            pageDrawings[action.pageNumber] = [];
+          }
+          if (action.newState is DrawingPath) {
+            pageDrawings[action.pageNumber]!.add(action.newState);
+          } else {
+            pageDrawings[action.pageNumber] =
+                List<DrawingPath>.from(action.newState);
+          }
+          break;
+
+        case ActionType.erase:
+          // Apply the erase action
+          pageDrawings[action.pageNumber] =
+              List<DrawingPath>.from(action.newState);
+          break;
+
+        case ActionType.text:
+          // Restore the text
+          if (!pageTextAnnotations.containsKey(action.pageNumber)) {
+            pageTextAnnotations[action.pageNumber] = [];
+          }
+          if (action.newState is TextAnnotation) {
+            pageTextAnnotations[action.pageNumber]!.add(action.newState);
+          } else {
+            pageTextAnnotations[action.pageNumber] =
+                List<TextAnnotation>.from(action.newState);
+          }
+          break;
+
+        case ActionType.measure:
+        case ActionType.box:
+          // Restore measurement or box
+          if (!pageDrawings.containsKey(action.pageNumber)) {
+            pageDrawings[action.pageNumber] = [];
+          }
+          pageDrawings[action.pageNumber] =
+              List<DrawingPath>.from(action.newState);
+          if (action.newState is Map) {
+            pageTextAnnotations[action.pageNumber] =
+                List<TextAnnotation>.from(action.newState['text']);
+          }
+          break;
+      }
+    });
   }
 
 // Add bottom controls for text mode
@@ -407,7 +580,19 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     if (!pageDrawings.containsKey(currentPage)) {
       pageDrawings[currentPage] = [];
     }
+
+    final oldState = pageDrawings[currentPage] != null
+        ? List<DrawingPath>.from(pageDrawings[currentPage]!)
+        : null;
+
     pageDrawings[currentPage]!.add(path);
+
+    addToHistory(AnnotationAction(
+      type: ActionType.draw,
+      pageNumber: currentPage,
+      oldState: oldState,
+      newState: path,
+    ));
   }
 
   Offset _getTransformedOffset(Offset screenOffset) {
@@ -499,6 +684,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
         // ],
       ),
       body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
             child: isLoading
@@ -542,6 +728,25 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                                 details.localFocalPoint);
                                         if (!_isWithinPageBounds(
                                             transformedOffset)) return;
+
+                                        if (mode == Mode.measure) {
+                                          setState(() {
+                                            if (measurementTool ==
+                                                MeasurementTool.box) {
+                                              boxStart = _getTransformedOffset(
+                                                  details.localFocalPoint);
+                                              currentBox = null;
+                                            } else {
+                                              if (measurementTool ==
+                                                  MeasurementTool.scale) {
+                                                pagePixelsPerMeter[
+                                                    currentPage] = null;
+                                              }
+                                              lineStart = _getTransformedOffset(
+                                                  details.localFocalPoint);
+                                            }
+                                          });
+                                        }
 
                                         if (mode == Mode.text) {
                                           _handleTextAdd(
@@ -589,12 +794,69 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                         final transformedOffset =
                                             _getTransformedOffset(
                                                 details.localFocalPoint);
-                                        // Check if the point is within page bounds
+
+                                        // Check if this is a zoom/pan gesture (scale != 1.0 or multiple pointers)
+                                        bool isZoomOrPanGesture =
+                                            details.scale != 1.0 ||
+                                                details.pointerCount > 1;
+
+                                        if (isZoomOrPanGesture) {
+                                          setState(() {
+                                            // Handle zoom
+                                            if (details.scale != 1.0) {
+                                              final newZoom = (previousZoom *
+                                                      details.scale)
+                                                  .clamp(0.2 / quality, 10.0);
+                                              final focalPoint =
+                                                  details.localFocalPoint;
+                                              final double zoomFactor =
+                                                  newZoom / zoom;
+                                              final Offset normalizedOffset =
+                                                  offset - focalPoint;
+                                              final Offset scaledOffset =
+                                                  normalizedOffset * zoomFactor;
+                                              final Offset offsetDelta =
+                                                  scaledOffset -
+                                                      normalizedOffset;
+                                              zoom = newZoom;
+                                              offset = _constrainOffset(
+                                                  offset + offsetDelta,
+                                                  newZoom);
+                                            } else {
+                                              // Handle pan
+                                              offset = _constrainOffset(
+                                                  offset +
+                                                      details.focalPointDelta,
+                                                  zoom);
+                                            }
+                                          });
+                                          return; // Exit early after handling zoom/pan
+                                        }
+
+                                        // If we get here, it's a drawing gesture
+
+                                        // Check if the point is within page bounds for drawing operations
                                         if (!_isWithinPageBounds(
                                                 transformedOffset) &&
                                             mode != Mode.pan) return;
 
-                                        if (isDraggingText &&
+                                        if (mode == Mode.measure &&
+                                            lineStart != null) {
+                                          setState(() {
+                                            _currentPointerPosition =
+                                                _getTransformedOffset(
+                                                    details.localFocalPoint);
+                                          });
+                                        } else if (mode == Mode.measure &&
+                                            boxStart != null) {
+                                          setState(() {
+                                            final currentPoint =
+                                                _getTransformedOffset(
+                                                    details.localFocalPoint);
+                                            currentBox = Rect.fromPoints(
+                                                boxStart!, currentPoint);
+                                          });
+                                        } else if (isDraggingText &&
                                             selectedAnnotation != null) {
                                           final newPosition =
                                               _getTransformedOffset(
@@ -612,17 +874,14 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                             selectedAnnotation =
                                                 annotations[index];
                                           });
-                                          return;
-                                        } else if (mode == Mode.erase &&
-                                            details.scale == 1.0) {
+                                        } else if (mode == Mode.erase) {
                                           setState(() {
                                             _currentPointerPosition =
                                                 details.localFocalPoint;
                                           });
                                           handleErase(details.localFocalPoint);
                                         } else if ((mode == Mode.draw ||
-                                                mode == Mode.highlight) &&
-                                            details.scale == 1.0) {
+                                            mode == Mode.highlight)) {
                                           if (currentPath.isEmpty ||
                                               (currentPath.last.point -
                                                           transformedOffset)
@@ -652,34 +911,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                             );
                                             setState(() {});
                                           }
-                                        } else {
-                                          setState(() {
-                                            if (details.scale != 1.0) {
-                                              final newZoom = (previousZoom *
-                                                      details.scale)
-                                                  .clamp(0.2 / quality, 10.0);
-                                              final focalPoint =
-                                                  details.localFocalPoint;
-                                              final double zoomFactor =
-                                                  newZoom / zoom;
-                                              final Offset normalizedOffset =
-                                                  offset - focalPoint;
-                                              final Offset scaledOffset =
-                                                  normalizedOffset * zoomFactor;
-                                              final Offset offsetDelta =
-                                                  scaledOffset -
-                                                      normalizedOffset;
-                                              zoom = newZoom;
-                                              offset = _constrainOffset(
-                                                  offset + offsetDelta,
-                                                  newZoom);
-                                            } else {
-                                              offset = _constrainOffset(
-                                                  offset +
-                                                      details.focalPointDelta,
-                                                  zoom);
-                                            }
-                                          });
                                         }
                                       },
                                       onScaleEnd: (details) {
@@ -688,6 +919,233 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                             _currentPointerPosition = null;
                                           });
                                         }
+                                        if (mode == Mode.measure &&
+                                            boxStart != null &&
+                                            currentBox != null) {
+                                          if (measurementTool ==
+                                              MeasurementTool.box) {
+                                            if (pixelsPerMeter != null) {
+                                              // Only allow box drawing if we have a reference scale
+                                              // Create and add the box path
+                                              final measurementPath =
+                                                  _createBoxPath(currentBox!,
+                                                      Colors.black);
+
+                                              setState(() {
+                                                addPathToCurrentPage(
+                                                    measurementPath);
+                                                // Add measurements for both sides and area
+                                                _addBoxMeasurements(currentBox!,
+                                                    measurementPath);
+                                              });
+                                            } else {
+                                              ScaffoldMessenger.of(context)
+                                                  .showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                      'Please set a reference scale first'),
+                                                ),
+                                              );
+                                            }
+                                          }
+
+                                          setState(() {
+                                            boxStart = null;
+                                            currentBox = null;
+                                          });
+                                        }
+
+                                        if (mode == Mode.measure &&
+                                            lineStart != null &&
+                                            _currentPointerPosition != null) {
+                                          final currentLineLength =
+                                              (lineStart! -
+                                                      _currentPointerPosition!)
+                                                  .distance;
+                                          if (measurementTool ==
+                                              MeasurementTool.scale) {
+                                            // Remove previous reference line if it exists
+                                            if (pageReferenceLines[
+                                                    currentPage] !=
+                                                null) {
+                                              setState(() {
+                                                // Remove the old reference line and text
+                                                final index =
+                                                    pageDrawings[currentPage]
+                                                        ?.indexOf(
+                                                            pageReferenceLines[
+                                                                currentPage]!);
+                                                if (index != null &&
+                                                    index != -1) {
+                                                  pageDrawings[currentPage]
+                                                      ?.removeAt(index);
+                                                }
+
+                                                if (pageReferenceTexts[
+                                                        currentPage] !=
+                                                    null) {
+                                                  pageTextAnnotations[
+                                                          currentPage]
+                                                      ?.remove(
+                                                          pageReferenceTexts[
+                                                              currentPage]);
+                                                }
+                                              });
+                                            }
+
+                                            // Add new reference line
+                                            setState(() {
+                                              // Replace this entire block with your new code
+                                              pageReferenceLines[currentPage] =
+                                                  DrawingPath(
+                                                [
+                                                  DrawingPoint(
+                                                    lineStart!,
+                                                    Paint()
+                                                      ..color =
+                                                          currentMeasurementColor
+                                                      ..strokeWidth =
+                                                          currentMeasurementStroke *
+                                                              4
+                                                      ..strokeCap =
+                                                          StrokeCap.round
+                                                      ..style =
+                                                          PaintingStyle.fill
+                                                      ..isAntiAlias = true,
+                                                    currentMeasurementStroke *
+                                                        4,
+                                                  ),
+                                                  DrawingPoint(
+                                                    _currentPointerPosition!,
+                                                    Paint()
+                                                      ..color =
+                                                          currentMeasurementColor
+                                                      ..strokeWidth =
+                                                          currentMeasurementStroke *
+                                                              4
+                                                      ..strokeCap =
+                                                          StrokeCap.round
+                                                      ..style =
+                                                          PaintingStyle.fill
+                                                      ..isAntiAlias = true,
+                                                    currentMeasurementStroke *
+                                                        4,
+                                                  ),
+                                                ],
+                                                Paint()
+                                                  ..color =
+                                                      currentMeasurementColor
+                                                  ..strokeWidth =
+                                                      currentMeasurementStroke
+                                                  ..strokeCap = StrokeCap.round
+                                                  ..isAntiAlias = true,
+                                                currentMeasurementStroke,
+                                                pathType: Mode.measure,
+                                                isDashed: true,
+                                                dashPattern: [8.0, 4.0],
+                                              );
+
+                                              addPathToCurrentPage(
+                                                  pageReferenceLines[
+                                                      currentPage]!);
+                                              pageLineLengths[currentPage] =
+                                                  currentLineLength;
+                                              lineStart = null;
+                                              _currentPointerPosition = null;
+                                            });
+
+                                            // Request focus for the reference input after a short delay
+                                            Future.delayed(
+                                                const Duration(
+                                                    milliseconds: 100), () {
+                                              if (mounted) {
+                                                _referenceController.clear();
+                                                _referenceFocusNode
+                                                    .requestFocus();
+                                              }
+                                            });
+                                          } else if (measurementTool ==
+                                                  MeasurementTool.measure &&
+                                              pixelsPerMeter != null) {
+                                            // Handle measurement lines
+                                            final measurementInMeters =
+                                                currentLineLength /
+                                                    pixelsPerMeter!;
+                                            setState(() {
+                                              // Add the measurement line
+                                              final measurementLine =
+                                                  DrawingPath(
+                                                [
+                                                  DrawingPoint(
+                                                    lineStart!,
+                                                    Paint()
+                                                      ..color = Colors.black
+                                                      ..strokeWidth = 3.0
+                                                      ..strokeCap =
+                                                          StrokeCap.round
+                                                      ..isAntiAlias = true,
+                                                    3.0,
+                                                  ),
+                                                  DrawingPoint(
+                                                    _currentPointerPosition!,
+                                                    Paint()
+                                                      ..color = Colors.black
+                                                      ..strokeWidth = 3.0
+                                                      ..strokeCap =
+                                                          StrokeCap.round
+                                                      ..isAntiAlias = true,
+                                                    3.0,
+                                                  ),
+                                                ],
+                                                Paint()
+                                                  ..color = Colors.black
+                                                  ..strokeWidth = 3.0
+                                                  ..strokeCap = StrokeCap.round
+                                                  ..isAntiAlias = true,
+                                                3.0,
+                                                pathType: Mode.measure,
+                                              );
+
+                                              addPathToCurrentPage(
+                                                  measurementLine);
+
+                                              // Add measurement text
+                                              final midPoint = (lineStart! +
+                                                      _currentPointerPosition!) /
+                                                  2;
+                                              final lineVector =
+                                                  _currentPointerPosition! -
+                                                      lineStart!;
+                                              final normalizedVector = Offset(
+                                                -lineVector.dy,
+                                                lineVector.dx,
+                                              ).normalized();
+
+                                              final textOffset = midPoint +
+                                                  (normalizedVector * 20.0);
+
+                                              if (!pageTextAnnotations
+                                                  .containsKey(currentPage)) {
+                                                pageTextAnnotations[
+                                                    currentPage] = [];
+                                              }
+
+                                              pageTextAnnotations[currentPage]!
+                                                  .add(TextAnnotation(
+                                                position: textOffset,
+                                                text:
+                                                    '${measurementInMeters.toStringAsFixed(2)} m',
+                                                fontSize: 14.0 * quality,
+                                                color: Colors.black,
+                                                fontFamily: 'Roboto',
+                                              ));
+
+                                              lineStart = null;
+                                              _currentPointerPosition = null;
+                                            });
+                                          }
+                                        }
+
                                         if ((mode == Mode.draw ||
                                                 mode == Mode.highlight) &&
                                             currentPath.isNotEmpty) {
@@ -718,6 +1176,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                           textAnnotations:
                                               currentPageTextAnnotations,
                                           quality: quality,
+                                          lineStart: lineStart,
+                                          pixelsPerMeter: pixelsPerMeter,
+                                          initialLineLength: initialLineLength,
+                                          currentBox: currentBox,
                                         ),
                                         size: Size(
                                           currentPageImage!.width.toDouble(),
@@ -840,6 +1302,78 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
               ),
             ),
           if (document != null && mode == Mode.measure)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 200,
+                  color: backgroundColor,
+                  padding: const EdgeInsets.all(8.0),
+                  child: TextFormField(
+                    controller: _referenceController,
+                    focusNode: _referenceFocusNode,
+                    decoration: const InputDecoration(
+                      labelText: "Referenzewert",
+                      suffixText: "Meter",
+                      focusedBorder: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.black)),
+                      labelStyle: TextStyle(color: Colors.black),
+                      border: OutlineInputBorder(
+                          borderSide: BorderSide(color: Colors.black)),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                    keyboardType:
+                        TextInputType.numberWithOptions(decimal: true),
+                    onFieldSubmitted: (value) {
+                      final referenceValue = double.tryParse(value);
+                      if (referenceValue != null &&
+                          pageLineLengths[currentPage] != null) {
+                        setState(() {
+                          initialLineLength = pageLineLengths[currentPage];
+                          pagePixelsPerMeter[currentPage] =
+                              pageLineLengths[currentPage]! / referenceValue;
+                          pageLineLengths[currentPage] = null;
+
+                          // Add reference measurement text
+                          if (pageReferenceLines[currentPage] != null) {
+                            final points =
+                                pageReferenceLines[currentPage]!.points;
+                            final midPoint =
+                                (points[0].point + points[1].point) / 2;
+                            final lineVector =
+                                points[1].point - points[0].point;
+                            final normalizedVector =
+                                Offset(-lineVector.dy, lineVector.dx)
+                                    .normalized();
+                            final textOffset =
+                                midPoint + (normalizedVector * 20.0);
+
+                            pageReferenceTexts[currentPage] = TextAnnotation(
+                              position: textOffset,
+                              text: '$referenceValue m (reference)',
+                              fontSize: 14.0 * quality,
+                              color: Colors.blue,
+                              fontFamily: 'Roboto',
+                            );
+
+                            if (!pageTextAnnotations.containsKey(currentPage)) {
+                              pageTextAnnotations[currentPage] = [];
+                            }
+                            pageTextAnnotations[currentPage]!
+                                .add(pageReferenceTexts[currentPage]!);
+                          }
+                        });
+                      }
+                    },
+                  ),
+                ),
+                MeasurementTool.scale == measurementTool
+                    ? _buildMeasurementControls()
+                    : SizedBox.shrink(),
+              ],
+            ),
+          if (document != null && mode == Mode.measure)
             Container(
               color: backgroundColor,
               child: Row(
@@ -849,28 +1383,67 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                     children: [
                       CustomButton(
                         svgAsset: 'assets/undo.svg',
-                        onTap: _canUndoScale ? null : () {},
+                        onTap: undoStack.isEmpty ? null : undo,
                         isActive: false,
                       ),
                       CustomButton(
                         svgAsset: 'assets/redo.svg',
-                        onTap: () {},
+                        onTap: redoStack.isEmpty ? null : redo,
                         isActive: false,
-                      )
+                      ),
                     ],
                   ),
                   Row(
                     children: [
                       CustomButton(
                         svgAsset: 'assets/scale.svg',
-                        onTap: () {},
-                        isActive: false,
+                        onTap: () {
+                          setState(() {
+                            measurementTool = MeasurementTool.scale;
+                            mode = Mode.measure;
+                          });
+                        },
+                        isActive: measurementTool == MeasurementTool.scale,
                       ),
                       CustomButton(
                         svgAsset: 'assets/measure.svg',
-                        onTap: () {},
-                        isActive: false,
-                      )
+                        onTap: () {
+                          if (referenceLine != null) {
+                            setState(() {
+                              measurementTool = MeasurementTool.measure;
+                              mode = Mode.measure;
+                            });
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content:
+                                    Text('Please draw a reference line first'),
+                              ),
+                            );
+                          }
+                        },
+                        isActive: measurementTool == MeasurementTool.measure,
+                      ),
+                      CustomButton(
+                        customIcon: const Icon(Icons.crop_square, size: 24),
+                        onTap: () {
+                          if (pixelsPerMeter != null) {
+                            setState(() {
+                              measurementTool = MeasurementTool.box;
+                              mode = Mode.measure;
+                            });
+                          } else {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content:
+                                    Text('Please set a reference scale first'),
+                              ),
+                            );
+                          }
+                        },
+                        isActive: measurementTool == MeasurementTool.box,
+                        svgAsset: '',
+                      ),
                     ],
                   ),
                 ],
@@ -920,6 +1493,181 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
         ],
       ),
     );
+  }
+
+  Widget _buildMeasurementControls() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: backgroundColor,
+        border: Border(
+          bottom: BorderSide(color: Colors.black26, width: 0.5),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        children: [
+          // Color picker row
+          Row(
+            children: [
+              const Text('Line Color: ',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              const SizedBox(width: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  Colors.blue,
+                  Colors.red,
+                  Colors.black,
+                  Colors.green,
+                  Colors.orange,
+                ]
+                    .map((color) => GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              currentMeasurementColor = color;
+                            });
+                          },
+                          child: Container(
+                            width: 24,
+                            height: 24,
+                            decoration: BoxDecoration(
+                              color: color,
+                              border: Border.all(
+                                color: currentMeasurementColor == color
+                                    ? Colors.white
+                                    : Colors.grey,
+                                width: 2,
+                              ),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ))
+                    .toList(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Stroke width slider
+          Row(
+            children: [
+              const Text('Line Width: ',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+              Expanded(
+                child: Slider(
+                  thumbColor: primaryColor,
+                  activeColor: primaryColor,
+                  value: currentMeasurementStroke,
+                  min: 1.0,
+                  max: 10.0,
+                  onChanged: (value) {
+                    setState(() {
+                      currentMeasurementStroke = value;
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _updateReferenceInput() {
+    if (pageReferenceTexts[currentPage] != null) {
+      // Extract the reference value from the text
+      // Example text format: "5 m (reference)"
+      final text = pageReferenceTexts[currentPage]!.text;
+      final value = text.split(' ')[0]; // Get the first part (number)
+      _referenceController.text = value;
+    } else {
+      _referenceController.clear();
+      // Reset measurement tool to scale if no reference exists
+      if (measurementTool != MeasurementTool.scale) {
+        setState(() {
+          measurementTool = MeasurementTool.scale;
+        });
+      }
+    }
+  }
+
+  void _addBoxMeasurements(Rect box, DrawingPath path) {
+    if (pixelsPerMeter == null) return;
+
+    // Calculate width and height in meters
+    final width = box.width.abs() / pixelsPerMeter!;
+    final height = box.height.abs() / pixelsPerMeter!;
+
+    if (!pageTextAnnotations.containsKey(currentPage)) {
+      pageTextAnnotations[currentPage] = [];
+    }
+
+    // Add width measurement (horizontal side)
+    final horizontalMidpoint = Offset(
+      box.left + box.width / 2,
+      box.bottom + 20.0, // Offset below the box
+    );
+
+    pageTextAnnotations[currentPage]!.add(TextAnnotation(
+      position: horizontalMidpoint,
+      text: '${width.toStringAsFixed(2)} m',
+      fontSize: 14.0 * quality,
+      color: Colors.black,
+      fontFamily: 'Roboto',
+    ));
+
+    // Add height measurement (vertical side)
+    final verticalMidpoint = Offset(
+      box.right + 20.0, // Offset to the right of the box
+      box.top + box.height / 2,
+    );
+
+    pageTextAnnotations[currentPage]!.add(TextAnnotation(
+      position: verticalMidpoint,
+      text: '${height.toStringAsFixed(2)} m',
+      fontSize: 14.0 * quality,
+      color: Colors.black,
+      fontFamily: 'Roboto',
+    ));
+
+    // Add area measurement in the center
+    final areaMidpoint = Offset(
+      box.left + box.width / 2,
+      box.top + box.height / 2,
+    );
+
+    final area = width * height;
+    pageTextAnnotations[currentPage]!.add(TextAnnotation(
+      position: areaMidpoint,
+      text: '${area.toStringAsFixed(2)} m²',
+      fontSize: 14.0 * quality,
+      color: Colors.black,
+      fontFamily: 'Roboto',
+    ));
+  }
+
+  DrawingPath _createBoxPath(Rect box, Color color) {
+    return DrawingPath(
+      [
+        DrawingPoint(box.topLeft, _createPaint(color), 2.0),
+        DrawingPoint(box.topRight, _createPaint(color), 2.0),
+        DrawingPoint(box.bottomRight, _createPaint(color), 2.0),
+        DrawingPoint(box.bottomLeft, _createPaint(color), 2.0),
+        DrawingPoint(box.topLeft, _createPaint(color), 2.0), // Close the box
+      ],
+      _createPaint(color),
+      2.0,
+      pathType: Mode.box, // Add a new Mode.box type
+    );
+  }
+
+  Paint _createPaint(Color color) {
+    return Paint()
+      ..color = color
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round
+      ..style = PaintingStyle.stroke
+      ..isAntiAlias = true;
   }
 
   double _calculateInitialZoom(BuildContext context, Size imageSize) {
@@ -1205,7 +1953,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
         setState(() {
           currentPageImage = image;
           currentPage = pageNumber;
-          // Reset zoom and offset when loading a new page
           final imageSize = Size(
             image.width.toDouble(),
             image.height.toDouble(),
@@ -1214,8 +1961,11 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
           previousZoom = zoom;
           offset = Offset.zero;
           previousOffset = Offset.zero;
-          currentPath = []; // Clear current path when changing pages
+          currentPath = [];
         });
+
+        // Update reference input when page changes
+        _updateReferenceInput();
       }
     } catch (e) {
       debugPrint('Error loading page: $e');
@@ -1277,6 +2027,10 @@ class PdfPainter extends CustomPainter {
   final Offset? currentPointerPosition;
   final List<TextAnnotation> textAnnotations;
   final double quality;
+  final Offset? lineStart;
+  final double? initialLineLength;
+  final double? pixelsPerMeter;
+  Rect? currentBox;
 
   PdfPainter(
     this.image,
@@ -1290,6 +2044,10 @@ class PdfPainter extends CustomPainter {
     this.currentPointerPosition,
     this.textAnnotations = const [],
     this.quality = 4.0,
+    this.lineStart,
+    this.initialLineLength,
+    this.pixelsPerMeter,
+    this.currentBox,
   });
 
   @override
@@ -1314,10 +2072,49 @@ class PdfPainter extends CustomPainter {
 
     // Draw completed paths
     for (final path in paths) {
-      canvas.drawPath(
-        path.createSmoothPath(zoom),
-        path.paint..isAntiAlias = true,
-      );
+      if (path.pathType == Mode.measure) {
+        canvas.drawLine(path.points[0].point, path.points[1].point, path.paint);
+      } else {
+        canvas.drawPath(
+          path.createSmoothPath(zoom),
+          path.paint..isAntiAlias = true,
+        );
+      }
+    }
+    if (mode == Mode.measure && currentBox != null) {
+      final boxPaint = Paint()
+        ..color = Colors.black
+        ..strokeWidth = 2.0
+        ..style = PaintingStyle.stroke;
+      canvas.drawRect(currentBox!, boxPaint);
+
+      // Show live measurements if we have a scale
+      if (pixelsPerMeter != null) {
+        final width = currentBox!.width.abs() / pixelsPerMeter!;
+        final height = currentBox!.height.abs() / pixelsPerMeter!;
+        final area = width * height;
+
+        // Width measurement
+        final widthText = '${width.toStringAsFixed(2)} m';
+        final heightText = '${height.toStringAsFixed(2)} m';
+        final areaText = '${area.toStringAsFixed(2)} m²';
+
+        _drawMeasurementText(
+            canvas,
+            widthText,
+            Offset(currentBox!.left + currentBox!.width / 2,
+                currentBox!.bottom + 20));
+        _drawMeasurementText(
+            canvas,
+            heightText,
+            Offset(currentBox!.right + 20,
+                currentBox!.top + currentBox!.height / 2));
+        _drawMeasurementText(
+            canvas,
+            areaText,
+            Offset(currentBox!.left + currentBox!.width / 2,
+                currentBox!.top + currentBox!.height / 2));
+      }
     }
 
     // Draw current path
@@ -1362,6 +2159,36 @@ class PdfPainter extends CustomPainter {
     }
 
     // Draw text annotations with proper scaling and clipping
+    if (mode == Mode.measure &&
+        lineStart != null &&
+        currentPointerPosition != null) {
+      final linePaint = Paint()
+        ..color = Colors.black
+        ..strokeWidth = 3.0
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..isAntiAlias = true;
+
+      canvas.drawLine(lineStart!, currentPointerPosition!, linePaint);
+
+      if (pixelsPerMeter != null) {
+        final distanceInPixels =
+            (lineStart! - currentPointerPosition!).distance;
+        final lengthInMeters = distanceInPixels / pixelsPerMeter!;
+        final textSpan = TextSpan(
+          text: '${lengthInMeters.toStringAsFixed(2)} meters',
+          style: TextStyle(color: Colors.black, fontSize: 50),
+        );
+        final textPainter = TextPainter(
+          text: textSpan,
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        final textOffset =
+            (lineStart! + currentPointerPosition!) / 2 - Offset(0, 10);
+        textPainter.paint(canvas, textOffset);
+      }
+    }
     for (final annotation in textAnnotations) {
       final textSpan = TextSpan(
         text: annotation.text,
@@ -1422,6 +2249,25 @@ class PdfPainter extends CustomPainter {
 
     canvas.restore();
     canvas.restore();
+  }
+
+  void _drawMeasurementText(Canvas canvas, String text, Offset position) {
+    final textSpan = TextSpan(
+      text: text,
+      style: TextStyle(
+        color: Colors.black,
+        fontSize: 14.0 * quality,
+        fontFamily: 'Roboto',
+      ),
+    );
+
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    );
+
+    textPainter.layout();
+    textPainter.paint(canvas, position);
   }
 
   @override
@@ -1505,11 +2351,6 @@ void exportPdfIsolate(List<dynamic> args) async {
     final coordinateScale = pdfScale / renderQuality;
 
     // Stroke width scaling
-    // Account for:
-    // 1. PDF points to screen pixels ratio (72/96)
-    // 2. Render quality (1/4)
-    // 3. PDF coordinate scale
-    // 4. Additional factor of 0.4 to match screen appearance
     final strokeScale =
         (pdfScale * (PDF_POINTS_PER_INCH / SCREEN_PPI) / renderQuality) * 0.4;
 
@@ -1548,52 +2389,72 @@ void exportPdfIsolate(List<dynamic> args) async {
                             opacity: color.alpha / 255,
                           ));
 
-                          // Apply the corrected stroke width scaling
                           final strokeWidth =
                               drawing.baseStrokeWidth * strokeScale;
                           canvas.setLineWidth(strokeWidth);
                           canvas.setLineCap(PdfLineCap.round);
                           canvas.setLineJoin(PdfLineJoin.round);
 
-                          // Rest of the drawing code...
                           var points = drawing.points;
                           if (points.length < 2) continue;
 
-                          canvas.moveTo(
-                              points[0].point.dx * coordinateScale,
-                              data.pageHeight -
-                                  (points[0].point.dy * coordinateScale));
+                          // Special handling for box paths
+                          if (drawing.pathType == Mode.box ||
+                              drawing.pathType == Mode.measure) {
+                            // Draw straight lines for boxes
+                            canvas.moveTo(
+                                points[0].point.dx * coordinateScale,
+                                data.pageHeight -
+                                    (points[0].point.dy * coordinateScale));
 
-                          for (int j = 0; j < points.length - 1; j++) {
-                            final p0 =
-                                j > 0 ? points[j - 1].point : points[j].point;
-                            final p1 = points[j].point;
-                            final p2 = points[j + 1].point;
-                            final p3 = j + 2 < points.length
-                                ? points[j + 2].point
-                                : p2;
-
-                            if (_isValidCoordinate(p1) &&
-                                _isValidCoordinate(p2)) {
-                              final cp1 = Offset(
-                                p1.dx + (p2.dx - p0.dx) / 6,
-                                p1.dy + (p2.dy - p0.dy) / 6,
-                              );
-                              final cp2 = Offset(
-                                p2.dx - (p3.dx - p1.dx) / 6,
-                                p2.dy - (p3.dy - p1.dy) / 6,
-                              );
-
-                              canvas.curveTo(
-                                  cp1.dx * coordinateScale,
-                                  data.pageHeight - (cp1.dy * coordinateScale),
-                                  cp2.dx * coordinateScale,
-                                  data.pageHeight - (cp2.dy * coordinateScale),
-                                  p2.dx * coordinateScale,
-                                  data.pageHeight - (p2.dy * coordinateScale));
+                            for (int j = 1; j < points.length; j++) {
+                              canvas.lineTo(
+                                  points[j].point.dx * coordinateScale,
+                                  data.pageHeight -
+                                      (points[j].point.dy * coordinateScale));
                             }
+                            canvas.strokePath();
+                          } else {
+                            // Handle freehand drawings with curves
+                            canvas.moveTo(
+                                points[0].point.dx * coordinateScale,
+                                data.pageHeight -
+                                    (points[0].point.dy * coordinateScale));
+
+                            for (int j = 0; j < points.length - 1; j++) {
+                              final p0 =
+                                  j > 0 ? points[j - 1].point : points[j].point;
+                              final p1 = points[j].point;
+                              final p2 = points[j + 1].point;
+                              final p3 = j + 2 < points.length
+                                  ? points[j + 2].point
+                                  : p2;
+
+                              if (_isValidCoordinate(p1) &&
+                                  _isValidCoordinate(p2)) {
+                                final cp1 = Offset(
+                                  p1.dx + (p2.dx - p0.dx) / 6,
+                                  p1.dy + (p2.dy - p0.dy) / 6,
+                                );
+                                final cp2 = Offset(
+                                  p2.dx - (p3.dx - p1.dx) / 6,
+                                  p2.dy - (p3.dy - p1.dy) / 6,
+                                );
+
+                                canvas.curveTo(
+                                    cp1.dx * coordinateScale,
+                                    data.pageHeight -
+                                        (cp1.dy * coordinateScale),
+                                    cp2.dx * coordinateScale,
+                                    data.pageHeight -
+                                        (cp2.dy * coordinateScale),
+                                    p2.dx * coordinateScale,
+                                    data.pageHeight -
+                                        (p2.dy * coordinateScale));
+                              }
+                            }
+                            canvas.strokePath();
                           }
-                          canvas.strokePath();
                         }
                       },
                     ),
@@ -1784,15 +2645,32 @@ class DrawingPath {
   final List<DrawingPoint> points;
   final Paint paint;
   final double baseStrokeWidth; // Add this field
+  final Mode? pathType;
+  final bool isDashed;
+  final List<double>? dashPattern;
 
-  DrawingPath(this.points, this.paint, this.baseStrokeWidth);
-
-  // Update createSmoothPath to use scaled stroke width
+  DrawingPath(
+    this.points,
+    this.paint,
+    this.baseStrokeWidth, {
+    this.pathType,
+    this.isDashed = false,
+    this.dashPattern,
+  });
   Path createSmoothPath(double currentZoom) {
     if (points.isEmpty) return Path();
 
     // Scale the stroke width based on current zoom
     paint.strokeWidth = baseStrokeWidth * currentZoom;
+    if (pathType == Mode.box) {
+      // For boxes, draw straight lines between points
+      Path path = Path();
+      path.moveTo(points[0].point.dx, points[0].point.dy);
+      for (var point in points.skip(1)) {
+        path.lineTo(point.point.dx, point.point.dy);
+      }
+      return path;
+    }
 
     if (points.length < 2) {
       return Path()
@@ -1834,6 +2712,85 @@ class DrawingPath {
     }
     return path;
   }
+  // Update createSmoothPath to use scaled stroke width
+  // Path createSmoothPath(double currentZoom) {
+  //   if (points.isEmpty) return Path();
+
+  //   paint.strokeWidth = baseStrokeWidth * currentZoom;
+  //   Path path = Path();
+
+  //   // Special handling for dashed measurement lines
+  //   if (isDashed && points.length == 2 && pathType == Mode.measure) {
+  //     final start = points[0].point;
+  //     final end = points[1].point;
+  //     final distance = (end - start).distance;
+  //     final direction = (end - start) / distance;
+
+  //     // Draw dotted line
+  //     double currentDistance = 0;
+  //     bool drawing = true;
+  //     double dashLength = dashPattern![0];
+  //     double gapLength = dashPattern![1];
+
+  //     while (currentDistance < distance) {
+  //       final startPoint = start + direction * currentDistance;
+  //       currentDistance += drawing ? dashLength : gapLength;
+  //       if (currentDistance > distance) currentDistance = distance;
+  //       final endPoint = start + direction * currentDistance;
+
+  //       if (drawing) {
+  //         path.moveTo(startPoint.dx, startPoint.dy);
+  //         path.lineTo(endPoint.dx, endPoint.dy);
+  //       }
+  //       drawing = !drawing;
+  //     }
+
+  //     // Draw endpoint dots
+  //     path.addOval(Rect.fromCircle(
+  //       center: points[0].point,
+  //       radius: points[0].baseStrokeWidth / 2,
+  //     ));
+  //     path.addOval(Rect.fromCircle(
+  //       center: points[1].point,
+  //       radius: points[1].baseStrokeWidth / 2,
+  //     ));
+
+  //     return path;
+  //   }
+
+  //   path.moveTo(points[0].point.dx, points[0].point.dy);
+
+  //   if (points.length == 2) {
+  //     path.lineTo(points[1].point.dx, points[1].point.dy);
+  //   } else {
+  //     for (int i = 0; i < points.length - 1; i++) {
+  //       final p0 = i > 0 ? points[i - 1].point : points[i].point;
+  //       final p1 = points[i].point;
+  //       final p2 = points[i + 1].point;
+  //       final p3 = i + 2 < points.length ? points[i + 2].point : p2;
+
+  //       final controlPoint1 = Offset(
+  //         p1.dx + (p2.dx - p0.dx) / 6,
+  //         p1.dy + (p2.dy - p0.dy) / 6,
+  //       );
+
+  //       final controlPoint2 = Offset(
+  //         p2.dx - (p3.dx - p1.dx) / 6,
+  //         p2.dy - (p3.dy - p1.dy) / 6,
+  //       );
+
+  //       path.cubicTo(
+  //         controlPoint1.dx,
+  //         controlPoint1.dy,
+  //         controlPoint2.dx,
+  //         controlPoint2.dy,
+  //         p2.dx,
+  //         p2.dy,
+  //       );
+  //     }
+  //   }
+  //   return path;
+  // }
 
   List<DrawingPath> splitPath(Offset eraserPoint, double eraserRadius) {
     if (points.isEmpty) return [this];
@@ -1875,4 +2832,35 @@ class DrawingPath {
             ))
         .toList();
   }
+}
+
+extension OffsetExtension on Offset {
+  Offset normalized() {
+    final length = distance;
+    if (length == 0.0) return Offset.zero;
+    return this / length;
+  }
+}
+
+enum MeasurementTool {
+  none,
+  scale,
+  measure,
+  box,
+}
+
+enum ActionType { draw, erase, text, measure, box }
+
+class AnnotationAction {
+  final ActionType type;
+  final int pageNumber;
+  final dynamic oldState;
+  final dynamic newState;
+
+  AnnotationAction({
+    required this.type,
+    required this.pageNumber,
+    this.oldState,
+    required this.newState,
+  });
 }

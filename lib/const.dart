@@ -5,9 +5,10 @@ const backgroundColor = Color(0xffFAFAFA);
 
 enum Mode {
   draw,
-  pan,
-  highlight,
-  text,
   erase,
+  text,
+  highlight,
   measure,
+  pan,
+  box,
 }
