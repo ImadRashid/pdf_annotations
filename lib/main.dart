@@ -23,10 +23,11 @@ const String _path =
     "/Users/imadrashid/Library/Developer/CoreSimulator/Devices/7F6DE896-F3AC-4087-A25F-172B4F8A7F0C/data/Containers/Data/Application/0CAC396E-EE21-4867-9808-314EC4A38494/tmp/Iman's Resume.pdf";
 void main() {
   runApp(
-    const MaterialApp(
+    MaterialApp(
       debugShowCheckedModeBanner: false,
       home: PdfViewerPage(
         filePath: _path,
+        exportToStorage: true,
       ),
     ),
   );
@@ -38,12 +39,15 @@ void main() {
 
 class PdfViewerPage extends StatefulWidget {
   final void Function()? onCloseButtonAction;
-  final String?
-      filePath; //if file path is null it will show pick a file button at center of screen
-  const PdfViewerPage({
+  bool? exportToStorage;
+  //if file path is null it will show pick a file button at center of screen
+  final String? filePath;
+  // pass either measurement or annotations mode default is annotations
+  PdfViewerPage({
     super.key,
     this.onCloseButtonAction,
     this.filePath,
+    this.exportToStorage = false,
   });
 
   @override
@@ -59,23 +63,12 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   // Helper methods to manage page-specific drawings
   List<DrawingPath> get currentPagePaths => pageDrawings[currentPage] ?? [];
 
-  void addPathToCurrentPage(DrawingPath path) {
-    if (!pageDrawings.containsKey(currentPage)) {
-      pageDrawings[currentPage] = [];
-    }
-    pageDrawings[currentPage]!.add(path);
-  }
-
   List<DrawingPath> paths = [];
 
   Color currentColor = Colors.red;
   Color currentColorHighlight = Colors.yellow.withAlpha(50);
   double currentStrokePen = 12.0;
   double currentStrokeHighlight = 48.0;
-
-  Offset _getTransformedOffset(Offset screenOffset) {
-    return (screenOffset - offset) / zoom;
-  }
 
   pr.PdfDocument? document;
   String? currentFilePath;
@@ -92,11 +85,54 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   // String mode = 'draw';
   Mode mode = Mode.pan;
 
-  double _getAdjustedStrokeWidth(double baseWidth) {
-    return baseWidth / zoom;
-  }
-
   double currentEraserSize = 20.0;
+  bool isTypingText = false;
+  FocusNode textFocusNode = FocusNode();
+  OverlayEntry? textOverlay;
+  final LayerLink layerLink = LayerLink();
+
+  final List<double> fontSizes = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
+  double selectedFontSize = 16.0;
+
+  double zoom = 1.0;
+  double previousZoom = 1.0;
+  Offset offset = Offset.zero;
+  Offset previousOffset = Offset.zero;
+
+  Map<int, List<TextAnnotation>> pageTextAnnotations = {};
+  TextEditingController textController = TextEditingController();
+  Offset? pendingTextPosition;
+  bool isAddingText = false;
+
+  List<TextAnnotation> get currentPageTextAnnotations =>
+      pageTextAnnotations[currentPage] ?? [];
+
+  TextAnnotation? selectedAnnotation;
+  bool isDraggingText = false;
+  bool isResizingText = false;
+  Offset? dragOffset;
+  bool _canUndoScale = false;
+  void _handleTextInteraction(Offset position) {
+    final transformedPosition = _getTransformedOffset(position);
+
+    for (final annotation in pageTextAnnotations[currentPage] ?? []) {
+      final rect = Rect.fromLTWH(
+        annotation.position.dx,
+        annotation.position.dy,
+        annotation.size.width,
+        annotation.size.height,
+      );
+
+      if (rect.contains(transformedPosition)) {
+        setState(() {
+          selectedAnnotation = annotation;
+          isDraggingText = true;
+          dragOffset = transformedPosition - annotation.position;
+        });
+        return;
+      }
+    }
+  }
 
   void handleErase(Offset point) {
     final transformedPoint = _getTransformedOffset(point);
@@ -191,44 +227,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     }
   }
 
-  double zoom = 1.0;
-  double previousZoom = 1.0;
-  Offset offset = Offset.zero;
-  Offset previousOffset = Offset.zero;
-
-  Map<int, List<TextAnnotation>> pageTextAnnotations = {};
-  TextEditingController textController = TextEditingController();
-  Offset? pendingTextPosition;
-  bool isAddingText = false;
-
-  List<TextAnnotation> get currentPageTextAnnotations =>
-      pageTextAnnotations[currentPage] ?? [];
-
-  TextAnnotation? selectedAnnotation;
-  bool isDraggingText = false;
-  bool isResizingText = false;
-  Offset? dragOffset;
-
-  void _handleTextInteraction(Offset position) {
-    final transformedPosition = _getTransformedOffset(position);
-
-    for (final annotation in pageTextAnnotations[currentPage] ?? []) {
-      final rect = Rect.fromLTWH(
-        annotation.position.dx,
-        annotation.position.dy,
-        annotation.size.width,
-        annotation.size.height,
-      );
-
-      if (rect.contains(transformedPosition)) {
-        setState(() {
-          selectedAnnotation = annotation;
-          isDraggingText = true;
-          dragOffset = transformedPosition - annotation.position;
-        });
-        return;
-      }
-    }
+  double _getAdjustedStrokeWidth(double baseWidth) {
+    return baseWidth / zoom;
   }
 
 // Add to initState:
@@ -245,11 +245,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     });
   }
 
-  bool isTypingText = false;
-  FocusNode textFocusNode = FocusNode();
-  OverlayEntry? textOverlay;
-  final LayerLink layerLink = LayerLink();
-// Add to dispose:
   @override
   void dispose() {
     textController.dispose();
@@ -257,117 +252,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     textOverlay?.remove();
     super.dispose();
   }
-
-  final List<double> fontSizes = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
-  double selectedFontSize = 16.0;
-
-  // void _handleTextAdd(Offset position) {
-  //   setState(() {
-  //     pendingTextPosition = position;
-  //     isAddingText = true;
-  //   });
-
-  //   // Show dialog for text input with font size selection
-  //   showDialog(
-  //     context: context,
-  //     builder: (context) => StatefulBuilder(
-  //       builder: (context, setDialogState) => AlertDialog(
-  //         title: const Text('Add Text'),
-  //         content: Column(
-  //           mainAxisSize: MainAxisSize.min,
-  //           children: [
-  //             TextField(
-  //               controller: textController,
-  //               autofocus: true,
-  //               decoration: const InputDecoration(
-  //                 hintText: 'Enter text...',
-  //                 border: OutlineInputBorder(),
-  //               ),
-  //               maxLines: null,
-  //               style: TextStyle(
-  //                   fontSize: selectedFontSize), // Preview font size in input
-  //             ),
-  //             const SizedBox(height: 16),
-  //             Row(
-  //               children: [
-  //                 const Text('Font Size: '),
-  //                 const SizedBox(width: 8),
-  //                 Container(
-  //                   padding: const EdgeInsets.symmetric(horizontal: 8),
-  //                   decoration: BoxDecoration(
-  //                     border: Border.all(color: Colors.grey),
-  //                     borderRadius: BorderRadius.circular(4),
-  //                   ),
-  //                   child: DropdownButton<double>(
-  //                     value: selectedFontSize,
-  //                     underline: const SizedBox(),
-  //                     items: fontSizes.map((double size) {
-  //                       return DropdownMenuItem<double>(
-  //                         value: size,
-  //                         child: Text('${size.toInt()}'),
-  //                       );
-  //                     }).toList(),
-  //                     onChanged: (double? newSize) {
-  //                       if (newSize != null) {
-  //                         setDialogState(() {
-  //                           selectedFontSize = newSize;
-  //                         });
-  //                       }
-  //                     },
-  //                   ),
-  //                 ),
-  //               ],
-  //             ),
-  //           ],
-  //         ),
-  //         actions: [
-  //           TextButton(
-  //             onPressed: () {
-  //               Navigator.pop(context);
-  //               setState(() {
-  //                 pendingTextPosition = null;
-  //                 isAddingText = false;
-  //                 textController.clear();
-  //               });
-  //             },
-  //             child: const Text('Cancel'),
-  //           ),
-  //           TextButton(
-  //             onPressed: () {
-  //               if (textController.text.isNotEmpty &&
-  //                   pendingTextPosition != null) {
-  //                 if (!pageTextAnnotations.containsKey(currentPage)) {
-  //                   pageTextAnnotations[currentPage] = [];
-  //                 }
-
-  //                 pageTextAnnotations[currentPage]!.add(TextAnnotation(
-  //                   position: _getTransformedOffset(pendingTextPosition!),
-  //                   text: textController.text,
-  //                   color: currentColor,
-  //                   fontSize: selectedFontSize,
-  //                 ));
-
-  //                 Navigator.pop(context);
-  //                 setState(() {
-  //                   pendingTextPosition = null;
-  //                   isAddingText = false;
-  //                   textController.clear();
-  //                 });
-  //               }
-  //             },
-  //             child: const Text(
-  //               'Confirm',
-  //               style: TextStyle(
-  //                 color: Colors.black,
-  //                 fontSize: 14,
-  //               ),
-  //             ),
-  //           ),
-  //         ],
-  //       ),
-  //     ),
-  //   );
-  // }
 
 // Add bottom controls for text mode
   Widget _buildTextControls() {
@@ -519,6 +403,17 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     });
   }
 
+  void addPathToCurrentPage(DrawingPath path) {
+    if (!pageDrawings.containsKey(currentPage)) {
+      pageDrawings[currentPage] = [];
+    }
+    pageDrawings[currentPage]!.add(path);
+  }
+
+  Offset _getTransformedOffset(Offset screenOffset) {
+    return (screenOffset - offset) / zoom;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -535,7 +430,19 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
           ),
         ),
         centerTitle: false,
-        title: Text(mode == Mode.measure ? "Messen" : "Ausfüllen"),
+        title: InkWell(
+            onTap: () {
+              setState(() {
+                if (mode == Mode.measure) {
+                  mode = Mode.pan;
+                } else {
+                  mode = Mode.measure;
+                }
+              });
+            },
+            child: Text(
+              mode == Mode.measure ? "Messen" : "Ausfüllen",
+            )),
         actions: [
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
@@ -872,7 +779,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                 },
               ),
             ),
-          if (document != null)
+          if (document != null && mode != Mode.measure)
             Container(
               color: backgroundColor,
               child: Row(
@@ -928,6 +835,43 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                     },
                     isActive: mode == Mode.pan,
                     svgAsset: '',
+                  ),
+                ],
+              ),
+            ),
+          if (document != null && mode == Mode.measure)
+            Container(
+              color: backgroundColor,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Row(
+                    children: [
+                      CustomButton(
+                        svgAsset: 'assets/undo.svg',
+                        onTap: _canUndoScale ? null : () {},
+                        isActive: false,
+                      ),
+                      CustomButton(
+                        svgAsset: 'assets/redo.svg',
+                        onTap: () {},
+                        isActive: false,
+                      )
+                    ],
+                  ),
+                  Row(
+                    children: [
+                      CustomButton(
+                        svgAsset: 'assets/scale.svg',
+                        onTap: () {},
+                        isActive: false,
+                      ),
+                      CustomButton(
+                        svgAsset: 'assets/measure.svg',
+                        onTap: () {},
+                        isActive: false,
+                      )
+                    ],
                   ),
                 ],
               ),
