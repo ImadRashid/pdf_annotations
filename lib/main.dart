@@ -1370,32 +1370,36 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                   ),
                 ),
               ),
-              child: Slider(
-                thumbColor: primaryColor,
-                activeColor: primaryColor,
-                value: mode == Mode.draw
-                    ? currentStrokePen
-                    : mode == Mode.erase
-                        ? currentEraserSize
-                        : currentStrokeHighlight,
-                min: 12.0,
-                max: mode == Mode.highlight ? 480.0 : 120.0,
-                label: mode == Mode.draw
-                    ? currentStrokePen.round().toString()
-                    : mode == Mode.erase
-                        ? currentEraserSize.round().toString()
-                        : currentStrokeHighlight.round().toString(),
-                onChanged: (value) {
-                  setState(() {
-                    if (mode == Mode.erase) {
-                      currentEraserSize = value;
-                    } else if (mode == Mode.draw) {
-                      currentStrokePen = value;
-                    } else if (mode == Mode.highlight) {
-                      currentStrokeHighlight = value;
-                    } else {}
-                  });
-                },
+              child: SliderTheme(
+                data: SliderThemeData(
+                    showValueIndicator: ShowValueIndicator.onlyForContinuous),
+                child: Slider(
+                  thumbColor: primaryColor,
+                  activeColor: primaryColor,
+                  value: mode == Mode.draw
+                      ? currentStrokePen
+                      : mode == Mode.erase
+                          ? currentEraserSize
+                          : currentStrokeHighlight,
+                  min: 12.0,
+                  max: mode == Mode.highlight ? 480.0 : 120.0,
+                  label: mode == Mode.draw
+                      ? currentStrokePen.round().toString()
+                      : mode == Mode.erase
+                          ? currentEraserSize.round().toString()
+                          : currentStrokeHighlight.round().toString(),
+                  onChanged: (value) {
+                    setState(() {
+                      if (mode == Mode.erase) {
+                        currentEraserSize = value;
+                      } else if (mode == Mode.draw) {
+                        currentStrokePen = value;
+                      } else if (mode == Mode.highlight) {
+                        currentStrokeHighlight = value;
+                      } else {}
+                    });
+                  },
+                ),
               ),
             ),
           if (document != null && mode != Mode.measure)
@@ -1727,29 +1731,33 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
               const Text('Line Width: ',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
               Expanded(
-                child: Slider(
-                  thumbColor: primaryColor,
-                  activeColor: primaryColor,
-                  value: MeasurementTool.scale == measurementTool
-                      ? currentMeasurementStroke
-                      : MeasurementTool.measure == measurementTool
-                          ? currentMeasurementLineStroke
-                          : MeasurementTool.box == measurementTool
-                              ? currentMeasurementBoxStroke
-                              : 10,
-                  min: 5.0,
-                  max: 100.0,
-                  onChanged: (value) {
-                    setState(() {
-                      if (MeasurementTool.scale == measurementTool) {
-                        currentMeasurementStroke = value;
-                      } else if (MeasurementTool.measure == measurementTool) {
-                        currentMeasurementLineStroke = value;
-                      } else if (MeasurementTool.box == measurementTool) {
-                        currentMeasurementBoxStroke = value;
-                      }
-                    });
-                  },
+                child: SliderTheme(
+                  data: SliderThemeData(
+                      showValueIndicator: ShowValueIndicator.onlyForContinuous),
+                  child: Slider(
+                    thumbColor: primaryColor,
+                    activeColor: primaryColor,
+                    value: MeasurementTool.scale == measurementTool
+                        ? currentMeasurementStroke
+                        : MeasurementTool.measure == measurementTool
+                            ? currentMeasurementLineStroke
+                            : MeasurementTool.box == measurementTool
+                                ? currentMeasurementBoxStroke
+                                : 10,
+                    min: 5.0,
+                    max: 100.0,
+                    onChanged: (value) {
+                      setState(() {
+                        if (MeasurementTool.scale == measurementTool) {
+                          currentMeasurementStroke = value;
+                        } else if (MeasurementTool.measure == measurementTool) {
+                          currentMeasurementLineStroke = value;
+                        } else if (MeasurementTool.box == measurementTool) {
+                          currentMeasurementBoxStroke = value;
+                        }
+                      });
+                    },
+                  ),
                 ),
               ),
             ],
