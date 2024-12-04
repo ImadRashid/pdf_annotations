@@ -17,7 +17,6 @@ import 'dart:math' as math;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:flutter/services.dart';
-
 import 'utils.dart';
 
 const String _path =
@@ -98,7 +97,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   ui.Image? currentPageImage;
   bool isPageLoading = false;
   double quality = 4.0;
-  // String mode = 'draw';
   Mode mode = Mode.pan;
 
   double currentEraserSize = 20.0;
@@ -107,6 +105,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   OverlayEntry? textOverlay;
   final LayerLink layerLink = LayerLink();
 
+  // final List<double> fontSizes = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
   final List<double> fontSizes = [12, 14, 16, 18, 20, 24, 28, 32, 36, 48];
   double selectedFontSize = 16.0;
 
@@ -120,11 +119,11 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   TextEditingController textController = TextEditingController();
   Offset? pendingTextPosition;
   bool isAddingText = false;
-  DrawingPath? referenceBox; // Store reference box
-  TextAnnotation? referenceBoxText; // Store reference box measurement text
-  double? boxArea; // Store box area
-  double? pixelsPerSquareMeter; // For area calculations
-  Offset? boxStart; // For drawing the box
+  DrawingPath? referenceBox;
+  TextAnnotation? referenceBoxText;
+  double? boxArea;
+  double? pixelsPerSquareMeter;
+  Offset? boxStart;
   Rect? currentBox;
   List<TextAnnotation> get currentPageTextAnnotations =>
       pageTextAnnotations[currentPage] ?? [];
@@ -137,6 +136,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   final _referenceFocusNode = FocusNode();
   MeasurementTool measurementTool = MeasurementTool.none;
   TextEditingController _referenceController = TextEditingController();
+
+  List<AnnotationAction> undoStack = [];
+  List<AnnotationAction> redoStack = [];
+  static const int maxHistorySize = 50;
 
   void _handleTextInteraction(Offset position) {
     final transformedPosition = _getTransformedOffset(position);
@@ -300,11 +303,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     textOverlay?.remove();
     super.dispose();
   }
-
-  List<AnnotationAction> undoStack = [];
-  List<AnnotationAction> redoStack = [];
-  static const int maxHistorySize =
-      50; // Limit stack size to prevent memory issues
 
   void addToHistory(AnnotationAction action) {
     undoStack.add(action);
@@ -534,7 +532,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                   controller: textController,
                   autofocus: true,
                   style: TextStyle(
-                    fontSize: selectedFontSize * zoom,
+                    // Divide by quality to match the final annotation scale
+                    fontSize: selectedFontSize / quality,
                     color: currentColor,
                   ),
                   decoration: const InputDecoration(
@@ -548,12 +547,14 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                         pageTextAnnotations[currentPage] = [];
                       }
 
-                      // Store the base font size without zoom factor
+                      // Store the annotation with the original font size
                       pageTextAnnotations[currentPage]!.add(TextAnnotation(
                         position: pendingTextPosition!,
                         text: text,
                         color: currentColor,
-                        fontSize: selectedFontSize * zoom,
+                        fontSize:
+                            selectedFontSize, // Remove the zoom multiplication
+                        fontFamily: 'Roboto',
                       ));
                     }
                     _finishTextInput();
@@ -668,18 +669,19 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
         ),
         centerTitle: false,
         title: InkWell(
-            onTap: () {
-              setState(() {
-                if (mode == Mode.measure) {
-                  mode = Mode.pan;
-                } else {
-                  mode = Mode.measure;
-                }
-              });
-            },
-            child: Text(
-              mode == Mode.measure ? "Messen" : "Ausfüllen",
-            )),
+          onTap: () {
+            setState(() {
+              if (mode == Mode.measure) {
+                mode = Mode.pan;
+              } else {
+                mode = Mode.measure;
+              }
+            });
+          },
+          child: Text(
+            mode == Mode.measure ? "Messen" : "Ausfüllen",
+          ),
+        ),
         actions: [
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
@@ -1477,10 +1479,12 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Container(
-                  width: 200,
+                  width: double.infinity,
                   color: backgroundColor,
                   padding: const EdgeInsets.all(8.0),
                   child: TextFormField(
+                    cursorColor: primaryColor,
+                    textInputAction: TextInputAction.done,
                     controller: _referenceController,
                     focusNode: _referenceFocusNode,
                     decoration: const InputDecoration(
@@ -1494,8 +1498,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                       contentPadding:
                           EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                     ),
-                    keyboardType:
-                        TextInputType.numberWithOptions(decimal: true),
                     onFieldSubmitted: (value) {
                       final referenceValue = double.tryParse(value);
                       if (referenceValue != null &&
@@ -2566,7 +2568,7 @@ class PdfPainter extends CustomPainter {
         text: annotation.text,
         style: TextStyle(
           color: annotation.color,
-          fontSize: annotation.fontSize,
+          fontSize: annotation.fontSize + 12,
           fontFamily: annotation.fontFamily,
         ),
       );
@@ -2924,7 +2926,7 @@ class TextAnnotation {
     required this.position,
     required this.text,
     this.fontSize = 16.0,
-    this.color = Colors.red,
+    this.color = Colors.black,
     this.fontFamily = 'Roboto',
     this.size = const Size(100, 30),
     this.isSelected = false,
