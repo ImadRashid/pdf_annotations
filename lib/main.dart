@@ -56,7 +56,6 @@ class PdfViewerPage extends StatefulWidget {
 
 class _PdfViewerPageState extends State<PdfViewerPage> {
   Offset? _currentPointerPosition;
-
   Map<int, List<DrawingPath>> pageDrawings = {};
   List<DrawingPoint> currentPath = [];
   Color currentMeasurementColor = Colors.orange;
@@ -65,7 +64,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   double currentMeasurementLineStroke = 10.0;
   Color currentMeasurementBoxColor = Colors.black;
   double currentMeasurementBoxStroke = 10.0;
-
   Map<int, DrawingPath?> pageReferenceLines = {};
   Map<int, TextAnnotation?> pageReferenceTexts = {};
   Map<int, double?> pagePixelsPerMeter = {};
@@ -656,8 +654,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white60,
-      appBar: // First, add this widget below the existing action buttons in the AppBar:
-          AppBar(
+      appBar: AppBar(
         leading: InkWell(
           onTap: widget.onCloseButtonAction,
           child: Container(
@@ -683,59 +680,42 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
           ),
         ),
         actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: primaryColor),
-            onPressed: document != null
-                ? _exportPdf
-                : () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("You need to open a file first"),
-                      ),
-                    );
-                  },
-            child: !isExporting
-                ? const Text(
-                    "Speichern",
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontWeight: ui.FontWeight.w500,
-                      fontSize: 14,
-                      fontFamily: 'Roboto',
-                    ),
-                  )
-                : const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                    ),
-                  ),
-          ),
+          document == null
+              ? SizedBox()
+              : ElevatedButton(
+                  style:
+                      ElevatedButton.styleFrom(backgroundColor: primaryColor),
+                  onPressed: document != null
+                      ? _exportPdf
+                      : () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text("You need to open a file first"),
+                            ),
+                          );
+                        },
+                  child: !isExporting
+                      ? const Text(
+                          "Speichern",
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontWeight: ui.FontWeight.w500,
+                            fontSize: 14,
+                            fontFamily: 'Roboto',
+                          ),
+                        )
+                      : Transform.scale(
+                          scale: 0.5,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 4,
+                            color: backgroundColor,
+                          ),
+                        ),
+                ),
           const SizedBox(
             width: 10,
           )
         ],
-
-        //     IconButton(
-        //       icon: const Icon(Icons.save),
-        //       onPressed: document != null ? _exportPdf : null,
-        //     )
-        //   else
-        //     const SizedBox(
-        //       width: 48,
-        //       height: 48,
-        //       child: Center(
-        //         child: SizedBox(
-        //           width: 24,
-        //           height: 24,
-        //           child: CircularProgressIndicator(
-        //             strokeWidth: 2,
-        //           ),
-        //         ),
-        //       ),
-        //     ),
-        // ],
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -753,16 +733,20 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                     ),
                   )
                 : document == null
-                    ? Center(
+                    ? Container(
+                        color: backgroundColor,
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.picture_as_pdf, size: 64),
+                            const Icon(Icons.picture_as_pdf_outlined, size: 64),
                             const SizedBox(height: 16),
                             ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                  backgroundColor: primaryColor),
                               onPressed: _pickAndLoadPdf,
                               child: const Text('Open PDF'),
                             ),
+                            Row()
                           ],
                         ),
                       )
