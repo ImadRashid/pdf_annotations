@@ -59,8 +59,12 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
   Map<int, List<DrawingPath>> pageDrawings = {};
   List<DrawingPoint> currentPath = [];
-  Color currentMeasurementColor = Colors.blue;
-  double currentMeasurementStroke = 3.0;
+  Color currentMeasurementColor = Colors.orange;
+  double currentMeasurementStroke = 10.0;
+  Color currentMeasurementLineColor = Colors.black;
+  double currentMeasurementLineStroke = 10.0;
+  Color currentMeasurementBoxColor = Colors.black;
+  double currentMeasurementBoxStroke = 10.0;
 
   Map<int, DrawingPath?> pageReferenceLines = {};
   Map<int, TextAnnotation?> pageReferenceTexts = {};
@@ -928,8 +932,25 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                               // Only allow box drawing if we have a reference scale
                                               // Create and add the box path
                                               final measurementPath =
-                                                  _createBoxPath(currentBox!,
-                                                      Colors.black);
+                                                  _createBoxPath(
+                                                      currentBox!,
+                                                      measurementTool ==
+                                                              MeasurementTool
+                                                                  .measure
+                                                          ? currentMeasurementLineColor
+                                                          : measurementTool ==
+                                                                  MeasurementTool
+                                                                      .box
+                                                              ? currentMeasurementBoxColor
+                                                              : Colors.black,
+                                                      MeasurementTool.scale ==
+                                                              measurementTool
+                                                          ? currentMeasurementLineStroke
+                                                          : MeasurementTool
+                                                                      .box ==
+                                                                  measurementTool
+                                                              ? currentMeasurementBoxStroke
+                                                              : 3.0);
 
                                               setState(() {
                                                 addPathToCurrentPage(
@@ -1043,6 +1064,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                                 pathType: Mode.measure,
                                                 isDashed: true,
                                                 dashPattern: [8.0, 4.0],
+                                                measurementTool:
+                                                    measurementTool,
                                               );
 
                                               addPathToCurrentPage(
@@ -1079,30 +1102,95 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                                   DrawingPoint(
                                                     lineStart!,
                                                     Paint()
-                                                      ..color = Colors.black
-                                                      ..strokeWidth = 3.0
+                                                      ..color = measurementTool ==
+                                                              MeasurementTool
+                                                                  .measure
+                                                          ? currentMeasurementLineColor
+                                                          : measurementTool ==
+                                                                  MeasurementTool
+                                                                      .box
+                                                              ? currentMeasurementBoxColor
+                                                              : Colors.black
+                                                      ..strokeWidth = MeasurementTool
+                                                                  .measure ==
+                                                              measurementTool
+                                                          ? currentMeasurementLineStroke
+                                                          : MeasurementTool
+                                                                      .box ==
+                                                                  measurementTool
+                                                              ? currentMeasurementBoxStroke
+                                                              : 3.0
                                                       ..strokeCap =
                                                           StrokeCap.round
                                                       ..isAntiAlias = true,
-                                                    3.0,
+                                                    MeasurementTool.measure ==
+                                                            measurementTool
+                                                        ? currentMeasurementLineStroke
+                                                        : MeasurementTool.box ==
+                                                                measurementTool
+                                                            ? currentMeasurementBoxStroke
+                                                            : 3.0,
                                                   ),
                                                   DrawingPoint(
                                                     _currentPointerPosition!,
                                                     Paint()
-                                                      ..color = Colors.black
-                                                      ..strokeWidth = 3.0
+                                                      ..color = measurementTool ==
+                                                              MeasurementTool
+                                                                  .measure
+                                                          ? currentMeasurementLineColor
+                                                          : measurementTool ==
+                                                                  MeasurementTool
+                                                                      .box
+                                                              ? currentMeasurementBoxColor
+                                                              : Colors.black
+                                                      ..strokeWidth = MeasurementTool
+                                                                  .measure ==
+                                                              measurementTool
+                                                          ? currentMeasurementLineStroke
+                                                          : MeasurementTool
+                                                                      .box ==
+                                                                  measurementTool
+                                                              ? currentMeasurementBoxStroke
+                                                              : 3.0
                                                       ..strokeCap =
                                                           StrokeCap.round
                                                       ..isAntiAlias = true,
-                                                    3.0,
+                                                    MeasurementTool.measure ==
+                                                            measurementTool
+                                                        ? currentMeasurementLineStroke
+                                                        : MeasurementTool.box ==
+                                                                measurementTool
+                                                            ? currentMeasurementBoxStroke
+                                                            : 3.0,
                                                   ),
                                                 ],
                                                 Paint()
-                                                  ..color = Colors.black
-                                                  ..strokeWidth = 3.0
+                                                  ..color = measurementTool ==
+                                                          MeasurementTool
+                                                              .measure
+                                                      ? currentMeasurementLineColor
+                                                      : measurementTool ==
+                                                              MeasurementTool
+                                                                  .box
+                                                          ? currentMeasurementBoxColor
+                                                          : Colors.black
+                                                  ..strokeWidth = MeasurementTool
+                                                              .measure ==
+                                                          measurementTool
+                                                      ? currentMeasurementLineStroke
+                                                      : MeasurementTool.box ==
+                                                              measurementTool
+                                                          ? currentMeasurementBoxStroke
+                                                          : 3.0
                                                   ..strokeCap = StrokeCap.round
                                                   ..isAntiAlias = true,
-                                                3.0,
+                                                MeasurementTool.measure ==
+                                                        measurementTool
+                                                    ? currentMeasurementLineStroke
+                                                    : MeasurementTool.box ==
+                                                            measurementTool
+                                                        ? currentMeasurementBoxStroke
+                                                        : 3.0,
                                                 pathType: Mode.measure,
                                               );
 
@@ -1352,8 +1440,8 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                             pageReferenceTexts[currentPage] = TextAnnotation(
                               position: textOffset,
                               text: '$referenceValue m (reference)',
-                              fontSize: 14.0 * quality,
-                              color: Colors.blue,
+                              fontSize: 12.0 * quality,
+                              color: currentMeasurementColor,
                               fontFamily: 'Roboto',
                             );
 
@@ -1368,9 +1456,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                     },
                   ),
                 ),
-                MeasurementTool.scale == measurementTool
-                    ? _buildMeasurementControls()
-                    : SizedBox.shrink(),
+                _buildMeasurementControls()
               ],
             ),
           if (document != null && mode == Mode.measure)
@@ -1524,7 +1610,15 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                     .map((color) => GestureDetector(
                           onTap: () {
                             setState(() {
-                              currentMeasurementColor = color;
+                              if (MeasurementTool.scale == measurementTool) {
+                                currentMeasurementColor = color;
+                              } else if (MeasurementTool.measure ==
+                                  measurementTool) {
+                                currentMeasurementLineColor = color;
+                              } else if (MeasurementTool.box ==
+                                  measurementTool) {
+                                currentMeasurementBoxColor = color;
+                              }
                             });
                           },
                           child: Container(
@@ -1533,9 +1627,20 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                             decoration: BoxDecoration(
                               color: color,
                               border: Border.all(
-                                color: currentMeasurementColor == color
-                                    ? Colors.white
-                                    : Colors.grey,
+                                color: MeasurementTool.scale == measurementTool
+                                    ? currentMeasurementColor == color
+                                        ? Colors.white
+                                        : Colors.grey
+                                    : MeasurementTool.measure == measurementTool
+                                        ? currentMeasurementLineColor == color
+                                            ? Colors.white
+                                            : Colors.grey
+                                        : MeasurementTool.box == measurementTool
+                                            ? currentMeasurementBoxColor ==
+                                                    color
+                                                ? Colors.white
+                                                : Colors.grey
+                                            : Colors.white,
                                 width: 2,
                               ),
                               borderRadius: BorderRadius.circular(12),
@@ -1556,12 +1661,24 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                 child: Slider(
                   thumbColor: primaryColor,
                   activeColor: primaryColor,
-                  value: currentMeasurementStroke,
-                  min: 1.0,
-                  max: 10.0,
+                  value: MeasurementTool.scale == measurementTool
+                      ? currentMeasurementStroke
+                      : MeasurementTool.measure == measurementTool
+                          ? currentMeasurementLineStroke
+                          : MeasurementTool.box == measurementTool
+                              ? currentMeasurementBoxStroke
+                              : 10,
+                  min: 5.0,
+                  max: 100.0,
                   onChanged: (value) {
                     setState(() {
-                      currentMeasurementStroke = value;
+                      if (MeasurementTool.scale == measurementTool) {
+                        currentMeasurementStroke = value;
+                      } else if (MeasurementTool.measure == measurementTool) {
+                        currentMeasurementLineStroke = value;
+                      } else if (MeasurementTool.box == measurementTool) {
+                        currentMeasurementBoxStroke = value;
+                      }
                     });
                   },
                 ),
@@ -1646,25 +1763,28 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     ));
   }
 
-  DrawingPath _createBoxPath(Rect box, Color color) {
+  DrawingPath _createBoxPath(Rect box, Color color, double strokeSize) {
     return DrawingPath(
       [
-        DrawingPoint(box.topLeft, _createPaint(color), 2.0),
-        DrawingPoint(box.topRight, _createPaint(color), 2.0),
-        DrawingPoint(box.bottomRight, _createPaint(color), 2.0),
-        DrawingPoint(box.bottomLeft, _createPaint(color), 2.0),
-        DrawingPoint(box.topLeft, _createPaint(color), 2.0), // Close the box
+        DrawingPoint(box.topLeft, _createPaint(color, strokeSize), strokeSize),
+        DrawingPoint(box.topRight, _createPaint(color, strokeSize), strokeSize),
+        DrawingPoint(
+            box.bottomRight, _createPaint(color, strokeSize), strokeSize),
+        DrawingPoint(
+            box.bottomLeft, _createPaint(color, strokeSize), strokeSize),
+        DrawingPoint(box.topLeft, _createPaint(color, strokeSize),
+            strokeSize), // // Close the box
       ],
-      _createPaint(color),
-      2.0,
+      _createPaint(color, strokeSize),
+      strokeSize,
       pathType: Mode.box, // Add a new Mode.box type
     );
   }
 
-  Paint _createPaint(Color color) {
+  Paint _createPaint(Color color, double strokeSize) {
     return Paint()
       ..color = color
-      ..strokeWidth = 2.0
+      ..strokeWidth = strokeSize
       ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke
       ..isAntiAlias = true;
@@ -2069,11 +2189,88 @@ class PdfPainter extends CustomPainter {
 
     // Draw paths with anti-aliasing
     canvas.saveLayer(null, Paint()..isAntiAlias = true);
+    Path createDashedPath(Path path, double dashLength, double gapLength) {
+      Path dashedPath = Path();
+      for (ui.PathMetric pathMetric in path.computeMetrics()) {
+        double distance = 0.0;
+        while (distance < pathMetric.length) {
+          final double nextDistance = distance + dashLength;
+          dashedPath.addPath(
+            pathMetric.extractPath(distance, nextDistance),
+            Offset.zero,
+          );
+          distance = nextDistance + gapLength;
+        }
+      }
+      return dashedPath;
+    }
+
+    void drawStartAndEndDots(
+        Canvas canvas, List<Offset> points, Paint paint, double radius) {
+      Paint dotPaint = Paint()
+        ..color = paint.color
+        ..style = PaintingStyle.fill
+        ..isAntiAlias = true;
+
+      canvas.drawCircle(points.first, radius, dotPaint);
+      canvas.drawCircle(points.last, radius, dotPaint);
+    }
 
     // Draw completed paths
     for (final path in paths) {
       if (path.pathType == Mode.measure) {
-        canvas.drawLine(path.points[0].point, path.points[1].point, path.paint);
+        if (path.measurementTool == MeasurementTool.scale) {
+          print("measurement tools is ${path.measurementTool}");
+
+          // Create a paint for dotted dashed line
+          Paint dottedDashedPaint = Paint()
+            ..color = path.paint.color
+            ..strokeWidth = path.paint.strokeWidth
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..isAntiAlias = true;
+
+          // Create a path for the line
+          Path linePath = Path();
+          linePath.moveTo(path.points[0].point.dx, path.points[0].point.dy);
+          for (int i = 1; i < path.points.length; i++) {
+            linePath.lineTo(path.points[i].point.dx, path.points[i].point.dy);
+          }
+
+          // Create a dashed path
+          Path dashedPath = createDashedPath(
+              linePath, 10.0, 30.0); // Adjust dash and gap lengths as needed
+          canvas.drawPath(dashedPath, dottedDashedPaint);
+
+          // Draw big filled dots at start and end points
+          drawStartAndEndDots(canvas, path.points.map((p) => p.point).toList(),
+              path.paint, 30.0); // Adjust the size as needed
+        } else {
+          // Create a paint for dotted dashed line
+          Paint dottedDashedPaint = Paint()
+            ..color = path.paint.color
+            ..strokeWidth = path.paint.strokeWidth
+            ..style = PaintingStyle.stroke
+            ..strokeCap = StrokeCap.round
+            ..isAntiAlias = true;
+
+          // Create a path for the line
+          Path linePath = Path();
+          linePath.moveTo(path.points[0].point.dx, path.points[0].point.dy);
+          linePath.lineTo(path.points[1].point.dx, path.points[1].point.dy);
+
+          // Create a dashed path
+          Path dashedPath = createDashedPath(
+              linePath, 10.0, 30.0); // Adjust dash and gap lengths as needed
+          canvas.drawPath(dashedPath, dottedDashedPaint);
+
+          // Draw big filled dots at start and end points
+          drawStartAndEndDots(
+              canvas,
+              [path.points[0].point, path.points[1].point],
+              path.paint,
+              30.0); // Adjust the size as needed
+        }
       } else {
         canvas.drawPath(
           path.createSmoothPath(zoom),
@@ -2648,6 +2845,7 @@ class DrawingPath {
   final Mode? pathType;
   final bool isDashed;
   final List<double>? dashPattern;
+  MeasurementTool? measurementTool;
 
   DrawingPath(
     this.points,
@@ -2656,6 +2854,7 @@ class DrawingPath {
     this.pathType,
     this.isDashed = false,
     this.dashPattern,
+    this.measurementTool,
   });
   Path createSmoothPath(double currentZoom) {
     if (points.isEmpty) return Path();
