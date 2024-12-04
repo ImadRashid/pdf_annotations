@@ -852,6 +852,41 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                             details.scale != 1.0 ||
                                                 details.pointerCount > 1;
 
+                                        if (mode == Mode.pan ||
+                                            details.pointerCount > 1) {
+                                          setState(() {
+                                            if (details.scale != 1.0) {
+                                              // Handle zoom
+                                              final newZoom = (previousZoom *
+                                                      details.scale)
+                                                  .clamp(0.2 / quality, 10.0);
+                                              final focalPoint =
+                                                  details.localFocalPoint;
+                                              final double zoomFactor =
+                                                  newZoom / zoom;
+                                              final Offset normalizedOffset =
+                                                  offset - focalPoint;
+                                              final Offset scaledOffset =
+                                                  normalizedOffset * zoomFactor;
+                                              final Offset offsetDelta =
+                                                  scaledOffset -
+                                                      normalizedOffset;
+                                              zoom = newZoom;
+                                              offset = _constrainOffset(
+                                                  offset + offsetDelta,
+                                                  newZoom);
+                                            } else {
+                                              // Handle pan
+                                              offset = _constrainOffset(
+                                                offset +
+                                                    details.focalPointDelta,
+                                                zoom,
+                                              );
+                                            }
+                                          });
+                                          return;
+                                        }
+
                                         if (isZoomOrPanGesture) {
                                           setState(() {
                                             // Handle zoom
