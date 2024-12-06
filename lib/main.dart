@@ -302,17 +302,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     super.dispose();
   }
 
-  void addToHistory(AnnotationAction action) {
-    undoStack.add(action);
-    if (undoStack.length > maxHistorySize) {
-      undoStack.removeAt(0);
-    }
-    // Clear redo stack when new action is performed
-    redoStack.clear();
-    // Update UI to reflect undo/redo availability
-    setState(() {});
-  }
-
   void undo() {
     if (undoStack.isEmpty) return;
 
@@ -332,10 +321,16 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
           break;
 
         case ActionType.erase:
-          // Restore erased paths
+          // Restore both drawings and text annotations after erasing
           if (action.oldState != null) {
-            pageDrawings[action.pageNumber] =
-                List<DrawingPath>.from(action.oldState);
+            if (action.oldState['drawings'] != null) {
+              pageDrawings[action.pageNumber] =
+                  List<DrawingPath>.from(action.oldState['drawings']);
+            }
+            if (action.oldState['texts'] != null) {
+              pageTextAnnotations[action.pageNumber] =
+                  List<TextAnnotation>.from(action.oldState['texts']);
+            }
           }
           break;
 
@@ -351,22 +346,93 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
         case ActionType.measure:
         case ActionType.box:
-          // Remove measurement or restore previous state
+          // Remove both the measurement/box and its associated text
           if (action.oldState != null) {
-            pageDrawings[action.pageNumber] =
-                List<DrawingPath>.from(action.oldState);
-            pageTextAnnotations[action.pageNumber] =
-                List<TextAnnotation>.from(action.oldState);
-          } else {
-            pageDrawings[action.pageNumber]?.removeLast();
-            // Remove associated measurement text
-            if (pageTextAnnotations[action.pageNumber]?.isNotEmpty ?? false) {
-              pageTextAnnotations[action.pageNumber]?.removeLast();
+            // Restore drawings
+            if (action.oldState['drawings'] != null) {
+              pageDrawings[action.pageNumber] =
+                  List<DrawingPath>.from(action.oldState['drawings']);
+            } else {
+              pageDrawings.remove(action.pageNumber);
+            }
+
+            // Restore text annotations
+            if (action.oldState['texts'] != null) {
+              pageTextAnnotations[action.pageNumber] =
+                  List<TextAnnotation>.from(action.oldState['texts']);
+            } else {
+              pageTextAnnotations.remove(action.pageNumber);
             }
           }
           break;
       }
     });
+  }
+
+  void addToHistory(AnnotationAction action) {
+    // For measurement and box actions, store both drawings and text annotations
+    if (action.type == ActionType.measure || action.type == ActionType.box) {
+      action = AnnotationAction(
+        type: action.type,
+        pageNumber: action.pageNumber,
+        oldState: {
+          'drawings': pageDrawings[action.pageNumber] != null
+              ? List<DrawingPath>.from(pageDrawings[action.pageNumber]!)
+              : null,
+          'texts': pageTextAnnotations[action.pageNumber] != null
+              ? List<TextAnnotation>.from(
+                  pageTextAnnotations[action.pageNumber]!)
+              : null,
+        },
+        newState: action.newState,
+      );
+    }
+
+    undoStack.add(action);
+    if (undoStack.length > maxHistorySize) {
+      undoStack.removeAt(0);
+    }
+    redoStack.clear();
+    setState(() {});
+  }
+
+// Helper method to store state before adding measurements
+  void addMeasurementToHistory(int pageNumber, DrawingPath measurementPath,
+      List<TextAnnotation> measurementTexts) {
+    // Store the current state before adding new measurements
+    final oldDrawings = pageDrawings[pageNumber] != null
+        ? List<DrawingPath>.from(pageDrawings[pageNumber]!)
+        : null;
+    final oldTexts = pageTextAnnotations[pageNumber] != null
+        ? List<TextAnnotation>.from(pageTextAnnotations[pageNumber]!)
+        : null;
+
+    // Add the new measurement and its text
+    if (!pageDrawings.containsKey(pageNumber)) {
+      pageDrawings[pageNumber] = [];
+    }
+    pageDrawings[pageNumber]!.add(measurementPath);
+
+    if (!pageTextAnnotations.containsKey(pageNumber)) {
+      pageTextAnnotations[pageNumber] = [];
+    }
+    pageTextAnnotations[pageNumber]!.addAll(measurementTexts);
+
+    // Add to history with both old and new states
+    addToHistory(AnnotationAction(
+      type: measurementPath.pathType == Mode.box
+          ? ActionType.box
+          : ActionType.measure,
+      pageNumber: pageNumber,
+      oldState: {
+        'drawings': oldDrawings,
+        'texts': oldTexts,
+      },
+      newState: {
+        'drawings': List<DrawingPath>.from(pageDrawings[pageNumber]!),
+        'texts': List<TextAnnotation>.from(pageTextAnnotations[pageNumber]!),
+      },
+    ));
   }
 
   void redo() {
@@ -3032,7 +3098,7 @@ enum ResizeHandle {
 class DrawingPoint {
   final Offset point;
   final Paint paint;
-  final double baseStrokeWidth; // Add this field
+  final double baseStrokeWidth;
 
   DrawingPoint(this.point, this.paint, this.baseStrokeWidth);
 }
@@ -3040,7 +3106,7 @@ class DrawingPoint {
 class DrawingPath {
   final List<DrawingPoint> points;
   final Paint paint;
-  final double baseStrokeWidth; // Add this field
+  final double baseStrokeWidth;
   final Mode? pathType;
   final bool isDashed;
   final List<double>? dashPattern;
@@ -3110,85 +3176,6 @@ class DrawingPath {
     }
     return path;
   }
-  // Update createSmoothPath to use scaled stroke width
-  // Path createSmoothPath(double currentZoom) {
-  //   if (points.isEmpty) return Path();
-
-  //   paint.strokeWidth = baseStrokeWidth * currentZoom;
-  //   Path path = Path();
-
-  //   // Special handling for dashed measurement lines
-  //   if (isDashed && points.length == 2 && pathType == Mode.measure) {
-  //     final start = points[0].point;
-  //     final end = points[1].point;
-  //     final distance = (end - start).distance;
-  //     final direction = (end - start) / distance;
-
-  //     // Draw dotted line
-  //     double currentDistance = 0;
-  //     bool drawing = true;
-  //     double dashLength = dashPattern![0];
-  //     double gapLength = dashPattern![1];
-
-  //     while (currentDistance < distance) {
-  //       final startPoint = start + direction * currentDistance;
-  //       currentDistance += drawing ? dashLength : gapLength;
-  //       if (currentDistance > distance) currentDistance = distance;
-  //       final endPoint = start + direction * currentDistance;
-
-  //       if (drawing) {
-  //         path.moveTo(startPoint.dx, startPoint.dy);
-  //         path.lineTo(endPoint.dx, endPoint.dy);
-  //       }
-  //       drawing = !drawing;
-  //     }
-
-  //     // Draw endpoint dots
-  //     path.addOval(Rect.fromCircle(
-  //       center: points[0].point,
-  //       radius: points[0].baseStrokeWidth / 2,
-  //     ));
-  //     path.addOval(Rect.fromCircle(
-  //       center: points[1].point,
-  //       radius: points[1].baseStrokeWidth / 2,
-  //     ));
-
-  //     return path;
-  //   }
-
-  //   path.moveTo(points[0].point.dx, points[0].point.dy);
-
-  //   if (points.length == 2) {
-  //     path.lineTo(points[1].point.dx, points[1].point.dy);
-  //   } else {
-  //     for (int i = 0; i < points.length - 1; i++) {
-  //       final p0 = i > 0 ? points[i - 1].point : points[i].point;
-  //       final p1 = points[i].point;
-  //       final p2 = points[i + 1].point;
-  //       final p3 = i + 2 < points.length ? points[i + 2].point : p2;
-
-  //       final controlPoint1 = Offset(
-  //         p1.dx + (p2.dx - p0.dx) / 6,
-  //         p1.dy + (p2.dy - p0.dy) / 6,
-  //       );
-
-  //       final controlPoint2 = Offset(
-  //         p2.dx - (p3.dx - p1.dx) / 6,
-  //         p2.dy - (p3.dy - p1.dy) / 6,
-  //       );
-
-  //       path.cubicTo(
-  //         controlPoint1.dx,
-  //         controlPoint1.dy,
-  //         controlPoint2.dx,
-  //         controlPoint2.dy,
-  //         p2.dx,
-  //         p2.dy,
-  //       );
-  //     }
-  //   }
-  //   return path;
-  // }
 
   List<DrawingPath> splitPath(Offset eraserPoint, double eraserRadius) {
     if (points.isEmpty) return [this];
