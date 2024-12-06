@@ -19,6 +19,16 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:flutter/services.dart';
 import 'utils.dart';
 
+enum Mode {
+  draw,
+  erase,
+  text,
+  highlight,
+  measure,
+  pan,
+  box,
+}
+
 const String _path =
     "/Users/imadrashid/Library/Developer/CoreSimulator/Devices/7F6DE896-F3AC-4087-A25F-172B4F8A7F0C/data/Containers/Data/Application/0CAC396E-EE21-4867-9808-314EC4A38494/tmp/Iman's Resume.pdf";
 void main() {
@@ -75,6 +85,9 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
   // Helper methods to manage page-specific drawings
   List<DrawingPath> get currentPagePaths => pageDrawings[currentPage] ?? [];
+  Map<int, Map<DrawingPath, List<TextAnnotation>>> measurementTextMap = {};
+  Map<DrawingPath, List<TextAnnotation>> get currentPageMeasurementTexts =>
+      measurementTextMap[currentPage] ?? {};
 
   List<DrawingPath> paths = [];
 
@@ -303,193 +316,156 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   }
 
   void undo() {
-    if (undoStack.isEmpty) return;
+    // Get actions specific to current page
+    final currentPageActions =
+        undoStack.where((action) => action.pageNumber == currentPage).toList();
 
-    final action = undoStack.removeLast();
-    redoStack.add(action);
+    if (currentPageActions.isEmpty) return;
+
+    final action = currentPageActions.last;
+
+    // Remove the action from undoStack
+    undoStack.remove(action);
+
+    // Create redo action with proper states
+    final redoAction = AnnotationAction(
+      type: action.type,
+      pageNumber: action.pageNumber,
+      oldState: Map<String, dynamic>.from(action.oldState),
+      newState: _captureCompleteState(action.pageNumber),
+    );
+
+    redoStack.add(redoAction);
 
     setState(() {
-      switch (action.type) {
-        case ActionType.draw:
-          // Restore previous state of drawings
-          if (action.oldState != null) {
-            pageDrawings[action.pageNumber] =
-                List<DrawingPath>.from(action.oldState);
-          } else {
-            pageDrawings[action.pageNumber]?.removeLast();
-          }
-          break;
-
-        case ActionType.erase:
-          // Restore both drawings and text annotations after erasing
-          if (action.oldState != null) {
-            if (action.oldState['drawings'] != null) {
-              pageDrawings[action.pageNumber] =
-                  List<DrawingPath>.from(action.oldState['drawings']);
-            }
-            if (action.oldState['texts'] != null) {
-              pageTextAnnotations[action.pageNumber] =
-                  List<TextAnnotation>.from(action.oldState['texts']);
-            }
-          }
-          break;
-
-        case ActionType.text:
-          // Remove added text or restore modified text
-          if (action.oldState != null) {
-            pageTextAnnotations[action.pageNumber] =
-                List<TextAnnotation>.from(action.oldState);
-          } else {
-            pageTextAnnotations[action.pageNumber]?.removeLast();
-          }
-          break;
-
-        case ActionType.measure:
-        case ActionType.box:
-          // Remove both the measurement/box and its associated text
-          if (action.oldState != null) {
-            // Restore drawings
-            if (action.oldState['drawings'] != null) {
-              pageDrawings[action.pageNumber] =
-                  List<DrawingPath>.from(action.oldState['drawings']);
-            } else {
-              pageDrawings.remove(action.pageNumber);
-            }
-
-            // Restore text annotations
-            if (action.oldState['texts'] != null) {
-              pageTextAnnotations[action.pageNumber] =
-                  List<TextAnnotation>.from(action.oldState['texts']);
-            } else {
-              pageTextAnnotations.remove(action.pageNumber);
-            }
-          }
-          break;
-      }
+      _restoreState(action.oldState, action.pageNumber);
     });
   }
 
   void addToHistory(AnnotationAction action) {
-    // For measurement and box actions, store both drawings and text annotations
-    if (action.type == ActionType.measure || action.type == ActionType.box) {
-      action = AnnotationAction(
-        type: action.type,
-        pageNumber: action.pageNumber,
-        oldState: {
-          'drawings': pageDrawings[action.pageNumber] != null
-              ? List<DrawingPath>.from(pageDrawings[action.pageNumber]!)
-              : null,
-          'texts': pageTextAnnotations[action.pageNumber] != null
-              ? List<TextAnnotation>.from(
-                  pageTextAnnotations[action.pageNumber]!)
-              : null,
-        },
-        newState: action.newState,
-      );
-    }
+    // Capture the complete current state
+    final completeNewState = _captureCompleteState(action.pageNumber);
 
-    undoStack.add(action);
+    final historyAction = AnnotationAction(
+      type: action.type,
+      pageNumber: action.pageNumber,
+      oldState: Map<String, dynamic>.from(action.oldState),
+      newState: completeNewState,
+    );
+
+    undoStack.add(historyAction);
     if (undoStack.length > maxHistorySize) {
       undoStack.removeAt(0);
     }
     redoStack.clear();
-    setState(() {});
   }
 
 // Helper method to store state before adding measurements
   void addMeasurementToHistory(int pageNumber, DrawingPath measurementPath,
       List<TextAnnotation> measurementTexts) {
-    // Store the current state before adding new measurements
-    final oldDrawings = pageDrawings[pageNumber] != null
-        ? List<DrawingPath>.from(pageDrawings[pageNumber]!)
-        : null;
-    final oldTexts = pageTextAnnotations[pageNumber] != null
-        ? List<TextAnnotation>.from(pageTextAnnotations[pageNumber]!)
-        : null;
+    // Capture complete state before changes
+    final oldState = {
+      'drawings': pageDrawings[pageNumber] != null
+          ? List<DrawingPath>.from(pageDrawings[pageNumber]!)
+          : [],
+      'texts': pageTextAnnotations[pageNumber] != null
+          ? List<TextAnnotation>.from(pageTextAnnotations[pageNumber]!)
+          : [],
+      'measurementTextMap': measurementTextMap[pageNumber] != null
+          ? Map<DrawingPath, List<TextAnnotation>>.from(
+              measurementTextMap[pageNumber]!)
+          : {},
+      'reference': pageReferenceLines[pageNumber],
+      'referenceText': pageReferenceTexts[pageNumber],
+      'pixelsPerMeter': pagePixelsPerMeter[pageNumber],
+      'lineLength': pageLineLengths[pageNumber],
+    };
 
-    // Add the new measurement and its text
-    if (!pageDrawings.containsKey(pageNumber)) {
-      pageDrawings[pageNumber] = [];
-    }
-    pageDrawings[pageNumber]!.add(measurementPath);
+    // Apply changes atomically
+    setState(() {
+      // Add the measurement path
+      if (!pageDrawings.containsKey(pageNumber)) {
+        pageDrawings[pageNumber] = [];
+      }
+      pageDrawings[pageNumber]!.add(measurementPath);
 
-    if (!pageTextAnnotations.containsKey(pageNumber)) {
-      pageTextAnnotations[pageNumber] = [];
-    }
-    pageTextAnnotations[pageNumber]!.addAll(measurementTexts);
+      // Add measurement texts
+      if (!pageTextAnnotations.containsKey(pageNumber)) {
+        pageTextAnnotations[pageNumber] = [];
+      }
+      pageTextAnnotations[pageNumber]!.addAll(measurementTexts);
 
-    // Add to history with both old and new states
+      // Update measurement text mapping
+      if (!measurementTextMap.containsKey(pageNumber)) {
+        measurementTextMap[pageNumber] = {};
+      }
+      measurementTextMap[pageNumber]![measurementPath] = measurementTexts;
+    });
+
+    // Create history entry
     addToHistory(AnnotationAction(
       type: measurementPath.pathType == Mode.box
           ? ActionType.box
           : ActionType.measure,
       pageNumber: pageNumber,
-      oldState: {
-        'drawings': oldDrawings,
-        'texts': oldTexts,
-      },
+      oldState: oldState,
       newState: {
         'drawings': List<DrawingPath>.from(pageDrawings[pageNumber]!),
         'texts': List<TextAnnotation>.from(pageTextAnnotations[pageNumber]!),
+        'measurementTextMap': Map<DrawingPath, List<TextAnnotation>>.from(
+            measurementTextMap[pageNumber]!),
+        'reference': pageReferenceLines[pageNumber],
+        'referenceText': pageReferenceTexts[pageNumber],
+        'pixelsPerMeter': pagePixelsPerMeter[pageNumber],
+        'lineLength': pageLineLengths[pageNumber],
       },
     ));
   }
 
   void redo() {
-    if (redoStack.isEmpty) return;
+    // Get actions specific to current page
+    final currentPageActions =
+        redoStack.where((action) => action.pageNumber == currentPage).toList();
 
-    final action = redoStack.removeLast();
-    undoStack.add(action);
+    if (currentPageActions.isEmpty) return;
+
+    final action = currentPageActions.last;
+
+    // Remove the action from redoStack
+    redoStack.remove(action);
+
+    // Create undo action with proper states
+    final undoAction = AnnotationAction(
+      type: action.type,
+      pageNumber: action.pageNumber,
+      oldState: _captureCompleteState(action.pageNumber),
+      newState: Map<String, dynamic>.from(action.newState),
+    );
+
+    undoStack.add(undoAction);
 
     setState(() {
-      switch (action.type) {
-        case ActionType.draw:
-          // Restore the drawing
-          if (!pageDrawings.containsKey(action.pageNumber)) {
-            pageDrawings[action.pageNumber] = [];
-          }
-          if (action.newState is DrawingPath) {
-            pageDrawings[action.pageNumber]!.add(action.newState);
-          } else {
-            pageDrawings[action.pageNumber] =
-                List<DrawingPath>.from(action.newState);
-          }
-          break;
-
-        case ActionType.erase:
-          // Apply the erase action
-          pageDrawings[action.pageNumber] =
-              List<DrawingPath>.from(action.newState);
-          break;
-
-        case ActionType.text:
-          // Restore the text
-          if (!pageTextAnnotations.containsKey(action.pageNumber)) {
-            pageTextAnnotations[action.pageNumber] = [];
-          }
-          if (action.newState is TextAnnotation) {
-            pageTextAnnotations[action.pageNumber]!.add(action.newState);
-          } else {
-            pageTextAnnotations[action.pageNumber] =
-                List<TextAnnotation>.from(action.newState);
-          }
-          break;
-
-        case ActionType.measure:
-        case ActionType.box:
-          // Restore measurement or box
-          if (!pageDrawings.containsKey(action.pageNumber)) {
-            pageDrawings[action.pageNumber] = [];
-          }
-          pageDrawings[action.pageNumber] =
-              List<DrawingPath>.from(action.newState);
-          if (action.newState is Map) {
-            pageTextAnnotations[action.pageNumber] =
-                List<TextAnnotation>.from(action.newState['text']);
-          }
-          break;
-      }
+      _restoreState(action.newState, action.pageNumber);
     });
+  }
+
+  Map<String, dynamic> _captureCompleteState(int pageNumber) {
+    return {
+      'drawings': pageDrawings[pageNumber] != null
+          ? List<DrawingPath>.from(pageDrawings[pageNumber]!)
+          : null,
+      'texts': pageTextAnnotations[pageNumber] != null
+          ? List<TextAnnotation>.from(pageTextAnnotations[pageNumber]!)
+          : null,
+      'measurementTextMap': measurementTextMap[pageNumber] != null
+          ? Map<DrawingPath, List<TextAnnotation>>.from(
+              measurementTextMap[pageNumber]!)
+          : null,
+      'reference': pageReferenceLines[pageNumber],
+      'referenceText': pageReferenceTexts[pageNumber],
+      'pixelsPerMeter': pagePixelsPerMeter[pageNumber],
+      'lineLength': pageLineLengths[pageNumber],
+    };
   }
 
 // Add bottom controls for text mode
@@ -650,22 +626,69 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
       pageDrawings[currentPage] = [];
     }
 
-    final oldState = pageDrawings[currentPage] != null
+    final oldDrawings = pageDrawings[currentPage] != null
         ? List<DrawingPath>.from(pageDrawings[currentPage]!)
-        : null;
+        : [];
+    final oldTexts = pageTextAnnotations[currentPage] != null
+        ? List<TextAnnotation>.from(pageTextAnnotations[currentPage]!)
+        : [];
+    final oldMeasurementMap = measurementTextMap[currentPage] != null
+        ? Map<DrawingPath, List<TextAnnotation>>.from(
+            measurementTextMap[currentPage]!)
+        : {};
 
     pageDrawings[currentPage]!.add(path);
 
     addToHistory(AnnotationAction(
       type: ActionType.draw,
       pageNumber: currentPage,
-      oldState: oldState,
-      newState: path,
+      oldState: {
+        'drawings': oldDrawings,
+        'texts': oldTexts,
+        'measurementTextMap': oldMeasurementMap,
+      },
+      newState: {
+        'drawings': List<DrawingPath>.from(pageDrawings[currentPage]!),
+        'texts': oldTexts,
+        'measurementTextMap': oldMeasurementMap,
+      },
     ));
   }
 
   Offset _getTransformedOffset(Offset screenOffset) {
     return (screenOffset - offset) / zoom;
+  }
+
+  void _restoreState(Map<String, dynamic> state, int pageNumber) {
+    // Restore drawings
+    if (state['drawings'] != null) {
+      pageDrawings[pageNumber] = List<DrawingPath>.from(state['drawings']);
+    } else {
+      pageDrawings.remove(pageNumber);
+    }
+
+    // Restore text annotations
+    if (state['texts'] != null) {
+      pageTextAnnotations[pageNumber] =
+          List<TextAnnotation>.from(state['texts']);
+    } else {
+      pageTextAnnotations.remove(pageNumber);
+    }
+
+    // Restore measurement text mappings
+    if (state['measurementTextMap'] != null) {
+      measurementTextMap[pageNumber] =
+          Map<DrawingPath, List<TextAnnotation>>.from(
+              state['measurementTextMap']);
+    } else {
+      measurementTextMap.remove(pageNumber);
+    }
+
+    // Restore reference line state
+    pageReferenceLines[pageNumber] = state['reference'];
+    pageReferenceTexts[pageNumber] = state['referenceText'];
+    pagePixelsPerMeter[pageNumber] = state['pixelsPerMeter'];
+    pageLineLengths[pageNumber] = state['lineLength'];
   }
 
   Future<void> showSaveOptionsDialog(
@@ -1066,30 +1089,36 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                             if (pixelsPerMeter != null) {
                                               // Only allow box drawing if we have a reference scale
                                               // Create and add the box path
+                                              // final measurementPath =
+                                              //     _createBoxPath(
+                                              //         currentBox!,
+                                              //         measurementTool ==
+                                              //                 MeasurementTool
+                                              //                     .measure
+                                              //             ? currentMeasurementLineColor
+                                              //             : measurementTool ==
+                                              //                     MeasurementTool
+                                              //                         .box
+                                              //                 ? currentMeasurementBoxColor
+                                              //                 : Colors.black,
+                                              //         MeasurementTool.scale ==
+                                              //                 measurementTool
+                                              //             ? currentMeasurementLineStroke
+                                              //             : MeasurementTool
+                                              //                         .box ==
+                                              //                     measurementTool
+                                              //                 ? currentMeasurementBoxStroke
+                                              //                 : 3.0);
                                               final measurementPath =
                                                   _createBoxPath(
-                                                      currentBox!,
-                                                      measurementTool ==
-                                                              MeasurementTool
-                                                                  .measure
-                                                          ? currentMeasurementLineColor
-                                                          : measurementTool ==
-                                                                  MeasurementTool
-                                                                      .box
-                                                              ? currentMeasurementBoxColor
-                                                              : Colors.black,
-                                                      MeasurementTool.scale ==
-                                                              measurementTool
-                                                          ? currentMeasurementLineStroke
-                                                          : MeasurementTool
-                                                                      .box ==
-                                                                  measurementTool
-                                                              ? currentMeasurementBoxStroke
-                                                              : 3.0);
+                                                currentBox!,
+                                                currentMeasurementBoxColor,
+                                                currentMeasurementBoxStroke,
+                                              );
 
                                               setState(() {
-                                                addPathToCurrentPage(
-                                                    measurementPath);
+                                                // addPathToCurrentPage(
+                                                //     measurementPath);
                                                 // Add measurements for both sides and area
                                                 _addBoxMeasurements(currentBox!,
                                                     measurementPath);
@@ -1854,55 +1883,94 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   void _addBoxMeasurements(Rect box, DrawingPath path) {
     if (pixelsPerMeter == null) return;
 
-    // Calculate width and height in meters
+    // Store the complete state before making any changes
+    final oldDrawings = pageDrawings[currentPage] != null
+        ? List<DrawingPath>.from(pageDrawings[currentPage]!)
+        : [];
+    final oldTexts = pageTextAnnotations[currentPage] != null
+        ? List<TextAnnotation>.from(pageTextAnnotations[currentPage]!)
+        : [];
+    final oldMeasurementMap = measurementTextMap[currentPage] != null
+        ? Map<DrawingPath, List<TextAnnotation>>.from(
+            measurementTextMap[currentPage]!)
+        : {};
+
+    List<TextAnnotation> measurementTexts = [];
+
+    // Calculate measurements
     final width = box.width.abs() / pixelsPerMeter!;
     final height = box.height.abs() / pixelsPerMeter!;
-
-    if (!pageTextAnnotations.containsKey(currentPage)) {
-      pageTextAnnotations[currentPage] = [];
-    }
-
-    // Add width measurement (horizontal side)
-    final horizontalMidpoint = Offset(
-      box.left + box.width / 2,
-      box.bottom + 20.0, // Offset below the box
-    );
-
-    pageTextAnnotations[currentPage]!.add(TextAnnotation(
-      position: horizontalMidpoint,
-      text: '${width.toStringAsFixed(2)} m',
-      fontSize: 14.0 * quality,
-      color: Colors.black,
-      fontFamily: 'Roboto',
-    ));
-
-    // Add height measurement (vertical side)
-    final verticalMidpoint = Offset(
-      box.right + 20.0, // Offset to the right of the box
-      box.top + box.height / 2,
-    );
-
-    pageTextAnnotations[currentPage]!.add(TextAnnotation(
-      position: verticalMidpoint,
-      text: '${height.toStringAsFixed(2)} m',
-      fontSize: 14.0 * quality,
-      color: Colors.black,
-      fontFamily: 'Roboto',
-    ));
-
-    // Add area measurement in the center
-    final areaMidpoint = Offset(
-      box.left + box.width / 2,
-      box.top + box.height / 2,
-    );
-
     final area = width * height;
-    pageTextAnnotations[currentPage]!.add(TextAnnotation(
-      position: areaMidpoint,
-      text: '${area.toStringAsFixed(2)} m²',
-      fontSize: 14.0 * quality,
-      color: Colors.black,
-      fontFamily: 'Roboto',
+
+    // Create text annotations with position adjustments
+    measurementTexts.addAll([
+      TextAnnotation(
+        position: Offset(box.left + box.width / 2, box.bottom + 20.0),
+        text: '${width.toStringAsFixed(2)} m',
+        fontSize: 14.0 * quality,
+        color: Colors.black,
+        fontFamily: 'Roboto',
+      ),
+      TextAnnotation(
+        position: Offset(box.right + 20.0, box.top + box.height / 2),
+        text: '${height.toStringAsFixed(2)} m',
+        fontSize: 14.0 * quality,
+        color: Colors.black,
+        fontFamily: 'Roboto',
+      ),
+      TextAnnotation(
+        position: Offset(box.left + box.width / 2, box.top + box.height / 2),
+        text: '${area.toStringAsFixed(2)} m²',
+        fontSize: 14.0 * quality,
+        color: Colors.black,
+        fontFamily: 'Roboto',
+      ),
+    ]);
+
+    // Add all changes in a single setState call
+    setState(() {
+      // Add the box path first
+      if (!pageDrawings.containsKey(currentPage)) {
+        pageDrawings[currentPage] = [];
+      }
+      pageDrawings[currentPage]!.add(path);
+
+      // Add measurement texts
+      if (!pageTextAnnotations.containsKey(currentPage)) {
+        pageTextAnnotations[currentPage] = [];
+      }
+      pageTextAnnotations[currentPage]!.addAll(measurementTexts);
+
+      // Update measurement text mapping
+      if (!measurementTextMap.containsKey(currentPage)) {
+        measurementTextMap[currentPage] = {};
+      }
+      measurementTextMap[currentPage]![path] = measurementTexts;
+    });
+
+    // Create single history entry for the entire box operation
+    addToHistory(AnnotationAction(
+      type: ActionType.box,
+      pageNumber: currentPage,
+      oldState: {
+        'drawings': oldDrawings,
+        'texts': oldTexts,
+        'measurementTextMap': oldMeasurementMap,
+        'reference': pageReferenceLines[currentPage],
+        'referenceText': pageReferenceTexts[currentPage],
+        'pixelsPerMeter': pagePixelsPerMeter[currentPage],
+        'lineLength': pageLineLengths[currentPage],
+      },
+      newState: {
+        'drawings': List<DrawingPath>.from(pageDrawings[currentPage]!),
+        'texts': List<TextAnnotation>.from(pageTextAnnotations[currentPage]!),
+        'measurementTextMap': Map<DrawingPath, List<TextAnnotation>>.from(
+            measurementTextMap[currentPage]!),
+        'reference': pageReferenceLines[currentPage],
+        'referenceText': pageReferenceTexts[currentPage],
+        'pixelsPerMeter': pagePixelsPerMeter[currentPage],
+        'lineLength': pageLineLengths[currentPage],
+      },
     ));
   }
 
@@ -1915,12 +1983,12 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
             box.bottomRight, _createPaint(color, strokeSize), strokeSize),
         DrawingPoint(
             box.bottomLeft, _createPaint(color, strokeSize), strokeSize),
-        DrawingPoint(box.topLeft, _createPaint(color, strokeSize),
-            strokeSize), // // Close the box
+        DrawingPoint(box.topLeft, _createPaint(color, strokeSize), strokeSize),
       ],
       _createPaint(color, strokeSize),
       strokeSize,
-      pathType: Mode.box, // Add a new Mode.box type
+      pathType: Mode.box,
+      isDashed: false,
     );
   }
 
@@ -1952,22 +2020,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     // while maintaining high quality rendering
     return baseZoom * 1.2; // Adjust this multiplier as needed
   }
-
-  // double _calculateInitialZoom(BuildContext context, Size imageSize) {
-  //   if (currentPageImage == null) return 1.0;
-
-  //   final screenSize = MediaQuery.of(context).size;
-  //   final containerSize = Size(
-  //     screenSize.width,
-  //     screenSize.height - kToolbarHeight - 80,
-  //   );
-
-  //   final double horizontalRatio = containerSize.width / imageSize.width;
-  //   final double verticalRatio = containerSize.height / imageSize.height;
-
-  //   // Changed to allow the initial zoom to be larger than 1.0 if needed
-  //   return math.min(horizontalRatio, verticalRatio) / quality;
-  // }
 
   Offset _constrainOffset(Offset offset, double zoom) {
     if (currentPageImage == null) return Offset.zero;
@@ -3239,13 +3291,40 @@ enum ActionType { draw, erase, text, measure, box }
 class AnnotationAction {
   final ActionType type;
   final int pageNumber;
-  final dynamic oldState;
-  final dynamic newState;
+  final Map<String, dynamic> oldState;
+  final Map<String, dynamic> newState;
 
   AnnotationAction({
     required this.type,
     required this.pageNumber,
-    this.oldState,
+    required this.oldState,
     required this.newState,
   });
+
+  // Deep copy constructor
+  AnnotationAction.copy(AnnotationAction other)
+      : type = other.type,
+        pageNumber = other.pageNumber,
+        oldState = _deepCopyState(other.oldState),
+        newState = _deepCopyState(other.newState);
+
+  // Helper for deep copying state maps
+  static Map<String, dynamic> _deepCopyState(Map<String, dynamic> state) {
+    return {
+      'drawings': state['drawings'] != null
+          ? List<DrawingPath>.from(state['drawings'])
+          : null,
+      'texts': state['texts'] != null
+          ? List<TextAnnotation>.from(state['texts'])
+          : null,
+      'measurementTextMap': state['measurementTextMap'] != null
+          ? Map<DrawingPath, List<TextAnnotation>>.from(
+              state['measurementTextMap'])
+          : null,
+      'reference': state['reference'],
+      'referenceText': state['referenceText'],
+      'pixelsPerMeter': state['pixelsPerMeter'],
+      'lineLength': state['lineLength'],
+    };
+  }
 }
