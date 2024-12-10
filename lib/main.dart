@@ -572,7 +572,6 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                   controller: textController,
                   autofocus: true,
                   style: TextStyle(
-                    // Divide by quality to match the final annotation scale
                     fontSize: selectedFontSize / quality,
                     color: currentColor,
                   ),
@@ -581,24 +580,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                     isDense: true,
                     contentPadding: EdgeInsets.zero,
                   ),
-                  onSubmitted: (text) {
-                    if (text.isNotEmpty && pendingTextPosition != null) {
-                      if (!pageTextAnnotations.containsKey(currentPage)) {
-                        pageTextAnnotations[currentPage] = [];
-                      }
-
-                      // Store the annotation with the original font size
-                      pageTextAnnotations[currentPage]!.add(TextAnnotation(
-                        position: pendingTextPosition!,
-                        text: text,
-                        color: currentColor,
-                        fontSize:
-                            selectedFontSize, // Remove the zoom multiplication
-                        fontFamily: 'Roboto',
-                      ));
-                    }
-                    _finishTextInput();
-                  },
+                  onSubmitted: _saveTextAnnotation,
                 ),
               ),
             ),
@@ -609,6 +591,39 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
     Overlay.of(context).insert(textOverlay!);
     textFocusNode.requestFocus();
+  }
+
+  void _saveTextAnnotation(String text) {
+    if (text.isNotEmpty && pendingTextPosition != null) {
+      final oldTexts = pageTextAnnotations[currentPage] != null
+          ? List<TextAnnotation>.from(pageTextAnnotations[currentPage]!)
+          : [];
+
+      setState(() {
+        if (!pageTextAnnotations.containsKey(currentPage)) {
+          pageTextAnnotations[currentPage] = [];
+        }
+
+        pageTextAnnotations[currentPage]!.add(TextAnnotation(
+          position: pendingTextPosition!,
+          text: text,
+          color: currentColor,
+          fontSize: selectedFontSize,
+          fontFamily: 'Roboto',
+        ));
+      });
+
+      // Add to history
+      addToHistory(AnnotationAction(
+        type: ActionType.text,
+        pageNumber: currentPage,
+        oldState: {'texts': oldTexts},
+        newState: {
+          'texts': List<TextAnnotation>.from(pageTextAnnotations[currentPage]!)
+        },
+      ));
+    }
+    _finishTextInput();
   }
 
   void _finishTextInput() {
@@ -855,6 +870,14 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                                                 details.localFocalPoint);
                                         if (!_isWithinPageBounds(
                                             transformedOffset)) return;
+
+                                        // If there's active text input, save it before handling new interaction
+                                        if (isTypingText &&
+                                            textController.text.isNotEmpty) {
+                                          _saveTextAnnotation(
+                                              textController.text);
+                                          return;
+                                        }
 
                                         if (mode == Mode.measure) {
                                           setState(() {
