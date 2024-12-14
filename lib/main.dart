@@ -545,6 +545,18 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
   }
 
   void _handleTextAdd(Offset position) {
+    // If already typing, save or discard the current text before starting new
+    if (isTypingText) {
+      if (textController.text.isNotEmpty) {
+        _saveTextAnnotation(textController.text);
+      } else {
+        _finishTextInput();
+      }
+      // Return early to prevent immediate new text box
+      // Next click will create new text box
+      return;
+    }
+
     final transformedPosition = _getTransformedOffset(position);
     setState(() {
       pendingTextPosition = transformedPosition;
@@ -581,6 +593,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                     contentPadding: EdgeInsets.zero,
                   ),
                   onSubmitted: _saveTextAnnotation,
+                  onChanged: (value) {
+                    // Update state when text changes
+                    setState(() {});
+                  },
                 ),
               ),
             ),
@@ -591,6 +607,16 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
 
     Overlay.of(context).insert(textOverlay!);
     textFocusNode.requestFocus();
+  }
+
+  void _handleTapOutside() {
+    if (isTypingText) {
+      if (textController.text.isNotEmpty) {
+        _saveTextAnnotation(textController.text);
+      } else {
+        _finishTextInput();
+      }
+    }
   }
 
   void _saveTextAnnotation(String text) {
@@ -633,6 +659,7 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
       isTypingText = false;
       pendingTextPosition = null;
       textController.clear();
+      textFocusNode.unfocus();
     });
   }
 
