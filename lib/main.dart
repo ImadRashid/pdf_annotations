@@ -502,6 +502,12 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
                     selectedFontSize = newSize;
                   });
                 }
+                // Request focus after the state update
+                if (isTypingText) {
+                  Future.microtask(() {
+                    textFocusNode.requestFocus();
+                  });
+                }
               },
             ),
           ),
@@ -606,7 +612,10 @@ class _PdfViewerPageState extends State<PdfViewerPage> {
     );
 
     Overlay.of(context).insert(textOverlay!);
-    textFocusNode.requestFocus();
+    // Ensure focus is requested after overlay is inserted
+    Future.microtask(() {
+      textFocusNode.requestFocus();
+    });
   }
 
   void _handleTapOutside() {
